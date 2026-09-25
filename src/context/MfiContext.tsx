@@ -1106,7 +1106,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customerName: acc.customerName,
       transactionType: 'WITHDRAWAL',
       amount,
-      balanceBefore: balBefore
+      balanceBefore: balBefore,
       balanceAfter: balAfter,
       paymentMethod: method,
       reference,
