@@ -263,6 +263,10 @@ export interface Payment {
   receivedBy: string;
   idempotencyKey: string;
   isReversed: boolean;
+  principalAllocated?: number;
+  interestAllocated?: number;
+  feesAllocated?: number;
+  penaltiesAllocated?: number;
   allocations: PaymentAllocation[];
   reversalReason?: string;
   reversedAt?: string;
@@ -348,7 +352,7 @@ export interface ProviderWebhookTransaction {
   accountReference: string; // e.g., Loan Account Number
   amount: number;
   signatureVerified: boolean;
-  processingStatus: 'PENDING' | 'PROCESSED' | 'FAILED' | 'DUPLICATE';
+  processingStatus: 'PENDING' | 'PROCESSED' | 'FAILED' | 'DUPLICATE' | 'COMPLETED' | 'REQUIRES_REVIEW';
   receivedAt: string;
   errorMessage?: string;
 }

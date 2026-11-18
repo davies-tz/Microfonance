@@ -51,7 +51,7 @@ call :ensure_env
 
 if not exist "node_modules" (
     echo Installing dependencies, this may take a minute...
-    call npm install
+    call npm ci
     if errorlevel 1 (
         echo npm install failed. See the output above.
         pause
@@ -68,6 +68,11 @@ set "pushdb="
 set /p pushdb="Create/update database tables now with 'npm run db:push'? [Y/n]: "
 if /i not "%pushdb%"=="n" (
     call npm run db:push
+    if errorlevel 1 (
+        echo Database setup failed. See the output above.
+        pause
+        goto menu
+    )
 )
 
 echo.
@@ -106,20 +111,19 @@ if errorlevel 1 (
 )
 
 echo.
-echo Waiting for the database to become healthy...
-rem "timeout" errors out without a real console attached in some contexts;
-rem ping is a plain time-based delay that doesn't depend on one.
-ping -n 7 127.0.0.1 >nul
-
-echo Applying database schema (safe to re-run; only touches missing tables/columns)...
+echo Applying database schema...
 rem -T disables pseudo-TTY allocation so this can't hang waiting on a
 rem terminal that isn't there.
 docker compose exec -T app npm run db:push
+if errorlevel 1 (
+    echo Database setup failed. See the output above.
+    pause
+    goto menu
+)
 
 echo.
 echo ================================================
 echo   App running at http://localhost:!APP_PORT!
-echo   Demo login: any seeded account, password Imara@2025
 echo ================================================
 echo.
 start "" "http://localhost:!APP_PORT!"

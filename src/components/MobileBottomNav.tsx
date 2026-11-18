@@ -18,6 +18,7 @@ import {
   UserCheck,
   Sparkles,
 } from 'lucide-react';
+import { demoMode } from '../lib/demo';
 import { TabType } from './Sidebar';
 import { useMfi } from '../context/MfiContext';
 import { translations } from '../lib/i18n';
@@ -71,7 +72,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {drawerItems.map((item) => (
+              {drawerItems.filter((item) => demoMode || item.id !== 'about_demo').map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
@@ -123,6 +124,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
           })}
 
           <button
+            aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen(!drawerOpen)}
             className={`flex flex-col items-center justify-center py-1 px-3 min-w-[56px] min-h-[44px] rounded-xl transition-colors ${
               drawerOpen ? 'text-amber-400 font-bold' : 'text-slate-400 hover:text-slate-200'

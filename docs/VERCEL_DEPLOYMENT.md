@@ -71,7 +71,7 @@ npm run db:push
 
 You should see a list of `CREATE TABLE` statements followed by `[✓] Changes applied`. This only needs to be done once (and again in the future only if `src/db/schema.ts` changes).
 
-> Demo data (branches, staff, chart of accounts, etc.) does **not** need a separate seeding step — the app seeds itself automatically the first time it receives a request against an empty database, once it's deployed and live.
+> Bootstrap the first staff account with the production provisioning command in the [README](../README.md). Demo mode belongs on a separate disposable database.
 
 ## Step 5: Generate secrets
 
@@ -133,7 +133,7 @@ Once deployed, Vercel gives you a URL like `https://your-project.vercel.app`. Ch
 1. **Health check**: open `https://your-project.vercel.app/api/health` — should return `{"status":"ok","database":"connected",...}`. If this fails, see Troubleshooting below.
 2. **Login**: open the app itself and sign in with any seeded demo account (see the login screen's demo picker), password `Imara@2025`.
 
-The very first request may be a little slow (serverless cold start + one-time database seeding) — that's expected.
+The very first request may be a little slow (serverless cold start) — that's expected.
 
 ---
 

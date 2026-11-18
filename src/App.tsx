@@ -68,14 +68,14 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
+    <div className="imara-workspace flex flex-col font-sans">
       <Navbar />
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 bg-slate-950 pb-24 md:pb-8">
-          <div className="max-w-7xl mx-auto">
+        <main key={activeTab} className="imara-content flex-1 min-w-0 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
+          <div className={activeTab === 'about_demo' ? 'max-w-7xl mx-auto' : 'imara-light max-w-[1480px] mx-auto'}>
             {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
             {activeTab === 'customers' && <CustomersView />}
             {activeTab === 'groups' && <GroupsView />}

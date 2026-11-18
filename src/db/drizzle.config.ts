@@ -31,7 +31,8 @@ export default defineConfig({
     user: user,
     password: password,
     database: sqlDbName,
-    ssl: false,
+    port: Number(process.env.SQL_PORT || 5432),
+    ssl: process.env.SQL_SSL === "true",
   },
   verbose: true,
 });

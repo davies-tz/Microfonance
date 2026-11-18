@@ -38,6 +38,7 @@ export function getDb() {
 
     poolInstance = new Pool({
       host,
+      port: Number(process.env.SQL_PORT || 5432),
       user,
       password,
       database,

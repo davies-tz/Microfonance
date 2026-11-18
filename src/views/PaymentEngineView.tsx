@@ -19,7 +19,6 @@ export const PaymentEngineView: React.FC = () => {
     payments,
     loans,
     processRepayment,
-    reverseExistingPayment,
     currentUser,
     currentBranchId,
     language,
@@ -30,8 +29,6 @@ export const PaymentEngineView: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
-  const [showReversalModal, setShowReversalModal] = useState(false);
-  const [reversalReason, setReversalReason] = useState('');
 
   // New Repayment Modal state
   const [showNewPaymentModal, setShowNewPaymentModal] = useState(false);
@@ -53,32 +50,6 @@ export const PaymentEngineView: React.FC = () => {
       (loan && loan.customerName.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchesBranch && matchesSearch;
   });
-
-  const handleOpenReversal = (payment: Payment) => {
-    setSelectedPayment(payment);
-    setReversalReason('');
-    setShowReversalModal(true);
-  };
-
-  const handleExecuteReversal = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPayment || !reversalReason) return;
-
-    try {
-      await reverseExistingPayment(selectedPayment.id, reversalReason);
-      showToast(
-        'success',
-        language === 'sw' ? 'Malipo Yamebatilishwa' : 'Payment Reversed',
-        language === 'sw'
-          ? `Risiti ${selectedPayment.receiptNumber} imebatilishwa na leja kurekebishwa.`
-          : `Receipt ${selectedPayment.receiptNumber} was reversed and GL entries offset.`
-      );
-      setShowReversalModal(false);
-      setSelectedPayment(null);
-    } catch (err: any) {
-      showToast('error', 'Reversal Failed', err.message);
-    }
-  };
 
   const handleRecordNewRepayment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,12 +88,12 @@ export const PaymentEngineView: React.FC = () => {
           <h1 className="text-xl font-bold text-white tracking-tight">
             {language === 'sw'
               ? 'Injini ya Ugawaji wa Marejesho & Daftari la Mabadiliko'
-              : 'Payment Allocation Engine & Reversal Ledger'}
+              : 'Payments & Allocation'}
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
             {language === 'sw'
               ? 'Ugawaji wa marejesho kwa utaratibu wa BOT (Adhabu -> Ada -> Riba -> Salio la Msingi) na kumbukumbu salama za kubatilisha.'
-              : 'BOT-compliant waterfall payment allocation hierarchy and immutable compensating double-entry reversals.'}
+              : 'Record repayments and review posted collections.'}
           </p>
         </div>
 
@@ -252,18 +223,9 @@ export const PaymentEngineView: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {!p.isReversed ? (
-                          <button
-                            onClick={() => handleOpenReversal(p)}
-                            className="bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 hover:border-rose-700 text-slate-300 border border-slate-700 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all inline-flex items-center space-x-1"
-                            title="Reverse Payment with Compensating Double Entry"
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                            <span>{t.reverse}</span>
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-slate-500 italic">{language === 'sw' ? 'Imefidiwa' : 'Compensated'}</span>
-                        )}
+                        {p.isReversed ? (
+                          <span className="text-[10px] text-slate-500">{language === 'sw' ? 'Imefidiwa' : 'Compensated'}</span>
+                        ) : <span aria-hidden>—</span>}
                       </td>
                     </tr>
                   );
@@ -377,80 +339,6 @@ export const PaymentEngineView: React.FC = () => {
         </div>
       )}
 
-      {/* Non-Destructive Payment Reversal Modal */}
-      {showReversalModal && selectedPayment && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center space-x-2 text-rose-400 font-bold">
-                <ShieldAlert className="w-5 h-5" />
-                <h2 className="text-lg text-white font-bold">
-                  {language === 'sw' ? 'Batilisha Risiti ya Malipo' : 'Reverse Payment Receipt'}
-                </h2>
-              </div>
-              <button
-                onClick={() => setShowReversalModal(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleExecuteReversal} className="space-y-4 text-xs">
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between text-slate-400">
-                  <span>Receipt Number:</span>
-                  <span className="text-emerald-400 font-mono font-bold">{selectedPayment.receiptNumber}</span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Original Amount:</span>
-                  <span className="text-white font-mono font-bold">{formatTZS(selectedPayment.amount, language)}</span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Authorized Operator:</span>
-                  <span className="text-amber-300 font-medium">
-                    {currentUser.firstName} {currentUser.lastName} ({currentUser.role})
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-3 bg-rose-950/30 border border-rose-800/50 rounded-xl text-rose-300 text-[11px] leading-relaxed">
-                <strong>Financial Invariant Enforced:</strong> This action will NOT delete the original payment record. It will flag the payment as reversed, restore outstanding balances on affected installments, and automatically post an offsetting compensating journal voucher in the General Ledger.
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">
-                  {language === 'sw' ? 'Sababu ya Lazima ya Kubatilisha *' : 'Mandatory Audit Reason for Reversal *'}
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder={language === 'sw' ? 'mfano: Malipo yaliingizwa mara mbili au namba ya mkopo isiyo sahihi' : 'e.g. Teller keyed wrong loan account number; duplicate M-Pesa push callback.'}
-                  value={reversalReason}
-                  onChange={(e) => setReversalReason(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white focus:border-rose-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="pt-2 border-t border-slate-800 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowReversalModal(false)}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-xs font-semibold"
-                >
-                  {t.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="bg-rose-600 hover:bg-rose-500 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors shadow"
-                >
-                  {language === 'sw' ? 'Thibitisha Ubatilishaji' : 'Confirm Reversal & Post JV'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

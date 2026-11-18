@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useMfi } from '../context/MfiContext';
+import { demoMode } from '../lib/demo';
 import { translations } from '../lib/i18n';
 
 export type TabType =
@@ -85,17 +86,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: 'reports', label: t.reports, icon: <FileSpreadsheet className="w-4 h-4" /> },
     { id: 'staff', label: t.staffManagement, icon: <UserCheck className="w-4 h-4" /> },
     { id: 'audit', label: t.auditTrail, icon: <ShieldCheck className="w-4 h-4" /> },
-    { id: 'about_demo', label: t.aboutDemo, icon: <Sparkles className="w-4 h-4 text-emerald-400" /> },
+
   ];
+
+  if (demoMode) navItems.push({ id: 'about_demo', label: t.aboutDemo, icon: <Sparkles className="w-4 h-4" /> });
+
+  const headings: Partial<Record<TabType, string>> = {
+    dashboard: language === 'sw' ? 'Eneo la kazi' : 'Workspace',
+    products: language === 'sw' ? 'Mikopo na akiba' : 'Lending & savings',
+    accounting: language === 'sw' ? 'Fedha na shughuli' : 'Finance & operations',
+    reports: language === 'sw' ? 'Usimamizi' : 'Oversight',
+  };
 
   const userInitials = currentUser
     ? `${currentUser.firstName?.[0] || 'U'}${currentUser.lastName?.[0] || 'S'}`
     : 'IM';
 
   return (
-    <aside className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex-col flex-shrink-0">
+    <aside className="imara-sidebar hidden md:flex flex-col flex-shrink-0">
       {/* Current User Card */}
-      <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
+      <div className="imara-user-card order-last">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3 truncate">
             <div className="w-9 h-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-emerald-400 shadow flex-shrink-0">
@@ -121,12 +131,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       </div>
 
       {/* Navigation list */}
-      <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+      <nav aria-label={language === 'sw' ? 'Menyu kuu' : 'Main navigation'} className="flex-1 overflow-y-auto p-3 space-y-1">
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
           return (
-            <button
-              key={item.id}
+            <div key={item.id}>
+              {headings[item.id] && <p className="imara-nav-heading">{headings[item.id]}</p>}
+              <button
+              type="button"
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                 isActive
@@ -147,19 +160,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
                   {item.badge}
                 </span>
               )}
-            </button>
+              </button>
+            </div>
           );
         })}
       </nav>
 
-      {/* System Status Footer */}
-      <div className="p-3 border-t border-slate-800/80 bg-slate-950/60 text-[11px] text-slate-400 flex items-center justify-between">
-        <div className="flex items-center space-x-1.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-          <span className="text-slate-300 font-medium">PostgreSQL v16</span>
-        </div>
-        <span className="text-[10px] text-slate-500">TZS Standard</span>
-      </div>
     </aside>
   );
 };
