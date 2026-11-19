@@ -2,7 +2,7 @@
 <img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
 </div>
 
-# Imara Finance — Microfinance Management System
+# Mastermind Microfinance — Microfinance Management System
 
 A modular-monolith microfinance core banking platform (customer/KYC, group lending, loan origination with maker-checker approval, repayment allocation, savings, double-entry general ledger, mobile money integration, offline field sync, and audit trail) built with React + Vite on the frontend and an Express + PostgreSQL (Drizzle ORM) backend.
 

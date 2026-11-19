@@ -1,6 +1,6 @@
 /**
  * Granular Hierarchical Role-Based Access Control (RBAC) System
- * Defines institutional permissions for IMARA Finance SaaS Platform
+ * Defines institutional permissions for Mastermind Microfinance SaaS Platform
  */
 
 export type Role =

@@ -100,7 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
 
   const userInitials = currentUser
     ? `${currentUser.firstName?.[0] || 'U'}${currentUser.lastName?.[0] || 'S'}`
-    : 'IM';
+    : 'MM';
 
   return (
     <aside className="imara-sidebar hidden md:flex flex-col flex-shrink-0">

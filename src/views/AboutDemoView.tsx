@@ -62,7 +62,7 @@ export const AboutDemoView: React.FC<AboutDemoViewProps> = ({ onGoToLogin, onExp
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-black text-xl tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
-                  IMARA Finance
+                  Mastermind Microfinance
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   {content.brand.platformCategory}
@@ -934,9 +934,9 @@ export const AboutDemoView: React.FC<AboutDemoViewProps> = ({ onGoToLogin, onExp
       <footer className="py-8 border-t border-slate-800 bg-slate-950 text-xs text-slate-500 text-center">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
-            <span className="font-bold text-slate-300">IMARA Finance</span> — {content.brand.tagline}
+            <span className="font-bold text-slate-300">Mastermind Microfinance</span> — {content.brand.tagline}
           </div>
-          <div>© {new Date().getFullYear()} IMARA Finance SaaS Microfinance Platform. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} Mastermind Microfinance. All rights reserved.</div>
         </div>
       </footer>
     </div>

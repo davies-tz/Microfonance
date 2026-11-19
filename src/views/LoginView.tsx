@@ -233,7 +233,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
         <img src={heroIllustration} alt="" className="imara-login-photo" />
         <div className="imara-login-brand">
           <span className="imara-mark"><Building2 size={21} /></span>
-          <span>Imara Finance<small>{language === 'sw' ? 'Mfumo wa fedha' : 'Core banking platform'}</small></span>
+          <span>Mastermind Microfinance<small>{language === 'sw' ? 'Mfumo wa fedha' : 'Core banking platform'}</small></span>
         </div>
         <div className="imara-login-message">
           <h2>{language === 'sw' ? 'Huduma za fedha zilizo karibu na jamii.' : 'Banking built around your community.'}</h2>

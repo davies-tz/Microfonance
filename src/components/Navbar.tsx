@@ -25,7 +25,7 @@ export function Navbar() {
     <header className="imara-topbar">
       <div className="imara-brand">
         <span className="imara-mark"><Building2 size={20} /></span>
-        <span>Imara Finance<small>{language === 'sw' ? 'Eneo la kazi' : 'Operations workspace'}</small></span>
+        <span>Mastermind Microfinance<small>{language === 'sw' ? 'Eneo la kazi' : 'Operations workspace'}</small></span>
       </div>
       <div className="imara-topbar-tools">
         <label className="imara-tool imara-branch">

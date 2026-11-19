@@ -1,4 +1,4 @@
-# Imara Finance MFI - container image
+# Mastermind Microfinance container image
 #
 # This app is a single long-running Express server (server.ts), not a set of
 # serverless functions, so it's built here as a normal Node process. It needs
