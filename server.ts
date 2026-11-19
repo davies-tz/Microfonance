@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import * as dotenv from 'dotenv';
 import { getDb } from './src/db/index.js';
 import * as schema from './src/db/schema.js';
@@ -2115,6 +2114,7 @@ app.post('/api/offline-sync', requireAuth, async (req: any, res) => {
 // Vite Middleware for Development / Static serving for Production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: process.env.IMARA_DISABLE_HMR === 'true' ? false : undefined },
       appType: 'spa',
