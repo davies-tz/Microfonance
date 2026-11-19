@@ -1,3 +1,5 @@
+import { canAccessTab, firstAllowedTab } from './lib/workspaceAccess';
+import { demoMode } from './lib/demo';
 /**
  * Core Microfinance Management System (MMS) Entry Point
  * Implements modular banking monolith with double-entry accounting,
@@ -67,30 +69,35 @@ function AppContent() {
     );
   }
 
+  const allowed = (tab: TabType) => canAccessTab(currentUser.role, tab) || (tab === 'about_demo' && demoMode);
+  const visibleTab = allowed(activeTab) ? activeTab : firstAllowedTab(currentUser.role) as TabType | undefined;
+  const navigate = (tab: TabType) => { if (allowed(tab)) setActiveTab(tab); };
+
   return (
     <div className="imara-workspace flex flex-col font-sans">
       <Navbar />
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+        <Sidebar activeTab={visibleTab} setActiveTab={navigate} />
 
-        <main key={activeTab} className="imara-content flex-1 min-w-0 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
-          <div className={activeTab === 'about_demo' ? 'max-w-7xl mx-auto' : 'imara-light max-w-[1480px] mx-auto'}>
-            {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
-            {activeTab === 'customers' && <CustomersView />}
-            {activeTab === 'groups' && <GroupsView />}
-            {activeTab === 'products' && <LoanProductsView />}
-            {activeTab === 'origination' && <LoanOriginationView />}
-            {activeTab === 'servicing' && <LoanServicingView />}
-            {activeTab === 'payments' && <PaymentEngineView />}
-            {activeTab === 'savings' && <SavingsView />}
-            {activeTab === 'accounting' && <AccountingView />}
-            {activeTab === 'mobile_money' && <MobileMoneyView />}
-            {activeTab === 'offline_sync' && <OfflineSyncView />}
-            {activeTab === 'staff' && <StaffManagementView />}
-            {activeTab === 'audit' && <AuditTrailView />}
-            {activeTab === 'reports' && <ReportsView />}
-            {activeTab === 'about_demo' && (
+        <main key={visibleTab} className="imara-content flex-1 min-w-0 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
+          <div className={visibleTab === 'about_demo' ? 'max-w-7xl mx-auto' : 'imara-light max-w-[1480px] mx-auto'}>
+            {!visibleTab && <p className="text-sm">This account has no staff workspace access.</p>}
+            {visibleTab === 'dashboard' && <DashboardView setActiveTab={navigate} />}
+            {visibleTab === 'customers' && <CustomersView />}
+            {visibleTab === 'groups' && <GroupsView />}
+            {visibleTab === 'products' && <LoanProductsView />}
+            {visibleTab === 'origination' && <LoanOriginationView />}
+            {visibleTab === 'servicing' && <LoanServicingView />}
+            {visibleTab === 'payments' && <PaymentEngineView />}
+            {visibleTab === 'savings' && <SavingsView />}
+            {visibleTab === 'accounting' && <AccountingView />}
+            {visibleTab === 'mobile_money' && <MobileMoneyView />}
+            {visibleTab === 'offline_sync' && <OfflineSyncView />}
+            {visibleTab === 'staff' && <StaffManagementView />}
+            {visibleTab === 'audit' && <AuditTrailView />}
+            {visibleTab === 'reports' && <ReportsView />}
+            {visibleTab === 'about_demo' && (
               <AboutDemoView
                 onGoToLogin={() => setActiveTab('dashboard')}
                 onExploreDemo={() => setActiveTab('dashboard')}
@@ -100,7 +107,7 @@ function AppContent() {
         </main>
       </div>
 
-      <MobileBottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <MobileBottomNav activeTab={visibleTab} setActiveTab={navigate} />
     </div>
   );
 }

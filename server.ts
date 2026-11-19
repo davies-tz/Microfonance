@@ -4,10 +4,11 @@ import * as dotenv from 'dotenv';
 import { getDb } from './src/db/index.js';
 import * as schema from './src/db/schema.js';
 import { seedDatabaseIfEmpty } from './src/db/seed.js';
-import { eq, desc, sql, and, or, inArray } from 'drizzle-orm';
+import { eq, desc, sql, and, or, inArray, isNull } from 'drizzle-orm';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { canAccessTab, firstAllowedTab, memberRequestRoles } from './src/lib/workspaceAccess.js';
 
 dotenv.config();
 
@@ -165,27 +166,15 @@ function initDb() {
 
 // ==================== AUTHENTICATION ROUTES ====================
 
-// Helper to determine destination tab based on user commercial role
+function requireWorkspace(...tabs: string[]) {
+  return (req: any, res: express.Response, next: express.NextFunction) => {
+    if (!tabs.some((tab) => canAccessTab(req.user?.role, tab))) return res.status(403).json({ error: 'Access denied.' });
+    next();
+  };
+}
+
 function getRoleRedirectTab(role: string): string {
-  switch (role) {
-    case 'FIELD_OFFICER':
-    case 'LOAN_OFFICER':
-    case 'COLLECTION_OFFICER':
-    case 'CREDIT_OFFICER':
-      return 'offline_sync'; // Field operations workspace
-    case 'BRANCH_MANAGER':
-      return 'dashboard'; // Branch executive dashboard
-    case 'ACCOUNTANT':
-    case 'CASHIER':
-      return 'accounting'; // Accounting & General Ledger workspace
-    case 'AUDITOR':
-      return 'audit'; // Compliance & Audit trail workspace
-    case 'HEAD_OFFICE_MANAGER':
-    case 'ADMIN':
-    case 'SUPER_ADMIN':
-    default:
-      return 'dashboard'; // Administration executive dashboard
-  }
+  return firstAllowedTab(role) ?? 'dashboard';
 }
 
 // Login: Authenticate with Username or Email and Password
@@ -583,7 +572,7 @@ app.get('/api/auth/demo-users', (req, res) => {
 // ==================== HIERARCHICAL STAFF & USER MANAGEMENT API ====================
 
 // List all staff members
-app.get('/api/staff', requireAuth, async (req, res) => {
+app.get('/api/staff', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -617,7 +606,7 @@ app.get('/api/staff', requireAuth, async (req, res) => {
 });
 
 // Create new employee account (Privileged - Manager & Super Admin ONLY)
-app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'BRANCH_MANAGER'), async (req: any, res) => {
+app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -657,7 +646,10 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
 
     const newUserId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const cleanUsername = (username || `${firstName.toLowerCase()}.${lastName.toLowerCase()}`).trim();
-    const passwordHash = bcrypt.hashSync(initialPassword || 'Imara@2025', 10);
+    if (typeof initialPassword !== 'string' || initialPassword.length < 14 || Buffer.byteLength(initialPassword) > 72) {
+      return res.status(400).json({ error: 'Enter an initial password with at least 14 characters and at most 72 UTF-8 bytes.' });
+    }
+    const passwordHash = await bcrypt.hash(initialPassword, 12);
 
     await db.insert(schema.users).values({
       id: newUserId,
@@ -707,7 +699,7 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
 });
 
 // Update employee account
-app.put('/api/staff/:id', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'BRANCH_MANAGER'), async (req: any, res) => {
+app.put('/api/staff/:id', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -749,7 +741,7 @@ app.put('/api/staff/:id', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_M
 });
 
 // Toggle employee active / inactive status (Deactivate / Reactivate)
-app.post('/api/staff/:id/toggle-status', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'BRANCH_MANAGER'), async (req: any, res) => {
+app.post('/api/staff/:id/toggle-status', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -789,7 +781,7 @@ app.post('/api/staff/:id/toggle-status', requireAuth, requireRole('SUPER_ADMIN',
 });
 
 // Reset employee password / access
-app.post('/api/staff/:id/reset-access', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'BRANCH_MANAGER'), async (req: any, res) => {
+app.post('/api/staff/:id/reset-access', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -801,7 +793,7 @@ app.post('/api/staff/:id/reset-access', requireAuth, requireRole('SUPER_ADMIN', 
       return res.status(404).json({ error: 'Employee account not found.' });
     }
 
-    const defaultPassword = 'Imara@' + new Date().getFullYear();
+    const defaultPassword = crypto.randomBytes(18).toString('base64url');
     const passwordHash = bcrypt.hashSync(defaultPassword, 10);
 
     await db.update(schema.users).set({
@@ -848,7 +840,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Dashboard Summary & KPI Metrics
-app.get('/api/summary', requireAuth, async (req, res) => {
+app.get('/api/summary', requireAuth, requireWorkspace('dashboard', 'reports'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -912,11 +904,13 @@ app.get('/api/summary', requireAuth, async (req, res) => {
 });
 
 // Branches
-app.get('/api/branches', requireAuth, async (req, res) => {
+app.get('/api/branches', requireAuth, async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
-    const branchList = await db.select().from(schema.branches);
+    const branchList = await db.select().from(schema.branches).where(
+      req.user.role === 'BRANCH_MANAGER' ? eq(schema.branches.id, req.user.branchId ?? '') : undefined,
+    );
     res.json(branchList);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -971,86 +965,178 @@ app.post('/api/branches', requireAuth, requireRole('SUPER_ADMIN'), async (req: a
   }
 });
 
-// Customers
-app.get('/api/customers', requireAuth, async (req, res) => {
+// Customer membership and approval
+type NewCustomer = typeof schema.customers.$inferInsert;
+
+async function storeCustomer(tx: DatabaseTransaction, customer: NewCustomer) {
+  const [saved] = await tx.insert(schema.customers).values(customer).returning();
+  await tx.insert(schema.savingsAccounts).values({
+    id: crypto.randomUUID(), accountNumber: `SAV-${crypto.randomUUID()}`,
+    customerId: saved.id, productType: 'VOLUNTARY', balance: 0, lockedAmount: 0, status: 'ACTIVE',
+  });
+  return saved;
+}
+
+function auditMembership(tx: DatabaseTransaction, req: any, action: string, entityId: string, details: string) {
+  const user = req.user;
+  return tx.insert(schema.auditLogs).values({
+    id: crypto.randomUUID(), userId: user.id, userName: `${user.firstName} ${user.lastName}`,
+    userRole: user.role, action, entityName: 'CUSTOMER', entityId, ipAddress: req.ip, details,
+  });
+}
+
+app.get('/api/customers', requireAuth, requireWorkspace('customers'), async (req: any, res) => {
   try {
-    await initDb();
     const { db } = getDb();
-    const customerList = await db.select().from(schema.customers).orderBy(desc(schema.customers.createdAt));
-    res.json(customerList);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const customers = schema.customers;
+    const ownOnly = req.user.role === 'BRANCH_MANAGER';
+    const rows = await db.select().from(customers).where(and(
+      isNull(customers.archivedAt),
+      ownOnly ? eq(customers.createdBy, req.user.id) : undefined,
+    )).orderBy(desc(customers.createdAt));
+    res.json(rows);
+  } catch {
+    res.status(503).json({ error: 'Could not load members.' });
   }
 });
 
-app.post('/api/customers', requireAuth, async (req: any, res) => {
+app.post('/api/customers', requireAuth, requireRole('SUPER_ADMIN', ...memberRequestRoles), async (req: any, res) => {
+  const body = req.body;
+  const user = req.user;
+  const field = (key: string) => typeof body?.[key] === 'string' ? body[key].trim() : '';
+  const branchId = user.role === 'SUPER_ADMIN' ? field('branchId') : user.branchId;
+  const firstName = field('firstName');
+  const lastName = field('lastName');
+  const phoneNumber = field('phoneNumber');
+  if (!firstName || !lastName || !phoneNumber || !branchId) {
+    return res.status(400).json({ error: 'Name, phone and an assigned branch are required.' });
+  }
   try {
-    await initDb();
     const { db } = getDb();
-    const body = req.body;
-    const requester = req.user;
-
-    const id = `cust-${Date.now()}`;
-    const customerNumber = `CUST-2024-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const newCust = {
-      id,
-      customerNumber,
-      firstName: body.firstName,
-      lastName: body.lastName,
-      nationalIdNida: body.nationalIdNida,
-      phoneNumber: body.phoneNumber,
-      email: body.email || null,
-      dateOfBirth: body.dateOfBirth || '1990-01-01',
-      gender: body.gender || 'FEMALE',
-      residentialAddress: body.residentialAddress,
-      businessType: body.businessType,
-      monthlyIncome: Number(body.monthlyIncome) || 1000000,
-      branchId: body.branchId || 'br-kariakoo',
-      kycTier: Number(body.kycTier) || 2,
-      crbStatus: body.crbStatus || 'GOOD',
-      crbScore: Number(body.crbScore) || 710,
-      latitude: body.latitude ? Number(body.latitude) : null,
-      longitude: body.longitude ? Number(body.longitude) : null,
-      documentUrl: body.documentUrl || null,
+    const [branch] = await db.select({ id: schema.branches.id }).from(schema.branches)
+      .where(and(eq(schema.branches.id, branchId), eq(schema.branches.isActive, true)));
+    if (!branch) return res.status(400).json({ error: 'The assigned branch is unavailable.' });
+    const id = crypto.randomUUID();
+    const income = Number(body.monthlyIncome);
+    const customer: NewCustomer = {
+      id, customerNumber: `CUST-${id}`, firstName, lastName, phoneNumber,
+      nationalIdNida: field('nationalIdNida') || `UNVERIFIED-${id}`,
+      email: field('email') || null, dateOfBirth: field('dateOfBirth') || '1990-01-01',
+      gender: field('gender') || 'FEMALE', residentialAddress: field('residentialAddress'),
+      businessType: field('businessType'), monthlyIncome: Number.isFinite(income) && income >= 0 ? income : 0,
+      branchId, createdBy: user.id,
     };
-
-    await db.insert(schema.customers).values(newCust);
-
-    // Auto-create default voluntary savings account for new member
-    const savId = `sav-${Date.now()}`;
-    const accNum = `SAV-TZS-${Math.floor(10000 + Math.random() * 90000)}`;
-    await db.insert(schema.savingsAccounts).values({
-      id: savId,
-      accountNumber: accNum,
-      customerId: id,
-      productType: 'VOLUNTARY',
-      balance: 0,
-      lockedAmount: 0,
-      status: 'ACTIVE',
+    if (user.role === 'SUPER_ADMIN') {
+      const saved = await db.transaction(async (tx) => {
+        const member = await storeCustomer(tx, customer);
+        await auditMembership(tx, req, 'MEMBER_CREATED', member.id, 'Super Admin registered a member.');
+        return member;
+      });
+      return res.status(201).json(saved);
+    }
+    const requestId = crypto.randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.memberRequests).values({
+        id: requestId, kind: 'CREATE', requestedBy: user.id, payload: customer,
+      });
+      await auditMembership(tx, req, 'MEMBER_REGISTRATION_REQUESTED', requestId, 'Membership registration submitted for review.');
     });
+    res.status(202).json({ requestId, state: 'PENDING' });
+  } catch (error: any) {
+    if (error?.cause?.code === '23505') return res.status(409).json({ error: 'A member with that identifier already exists.' });
+    res.status(500).json({ error: 'Could not save the membership request.' });
+  }
+});
 
-    // Record audit log
-    await db.insert(schema.auditLogs).values({
-      id: `log-${Date.now()}`,
-      userId: requester.id,
-      userName: `${requester.firstName} ${requester.lastName}`,
-      userRole: requester.role,
-      action: 'CUSTOMER_ONBOARDING',
-      entityName: 'CUSTOMER',
-      entityId: id,
-      ipAddress: req.ip || '127.0.0.1',
-      details: `Onboarded customer ${body.firstName} ${body.lastName} (NIDA: ${body.nationalIdNida}).`,
+app.get('/api/member-requests', requireAuth, requireRole('SUPER_ADMIN', ...memberRequestRoles), async (req: any, res) => {
+  try {
+    const { db } = getDb();
+    const requests = schema.memberRequests;
+    const rows = await db.select({ request: requests, firstName: schema.customers.firstName, lastName: schema.customers.lastName,
+      requestedUsername: schema.users.username, requestedFirstName: schema.users.firstName, requestedLastName: schema.users.lastName })
+      .from(requests).leftJoin(schema.customers, eq(requests.customerId, schema.customers.id))
+      .innerJoin(schema.users, eq(requests.requestedBy, schema.users.id))
+      .where(req.user.role === 'SUPER_ADMIN' ? undefined : eq(requests.requestedBy, req.user.id))
+      .orderBy(desc(requests.createdAt));
+    res.json(rows.map(({ request, firstName, lastName, requestedUsername, requestedFirstName, requestedLastName }) => ({
+      id: request.id, kind: request.kind, state: request.state, reason: request.reason, createdAt: request.createdAt,
+      customerName: [request.payload?.firstName ?? firstName, request.payload?.lastName ?? lastName].filter(Boolean).join(' '),
+      requestedBy: [requestedFirstName, requestedLastName].join(' '), requestedUsername,
+      phone: request.payload?.phoneNumber, branchId: request.payload?.branchId,
+    })));
+  } catch {
+    res.status(503).json({ error: 'Could not load membership requests.' });
+  }
+});
+
+app.post('/api/customers/:id/removal-request', requireAuth, requireRole('SUPER_ADMIN', ...memberRequestRoles), async (req: any, res) => {
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (!reason || reason.length > 500) return res.status(400).json({ error: 'Enter a reason of up to 500 characters.' });
+  try {
+    const { db } = getDb();
+    const [customer] = await db.select({ id: schema.customers.id }).from(schema.customers).where(and(
+      eq(schema.customers.id, req.params.id), isNull(schema.customers.archivedAt),
+      req.user.role === 'SUPER_ADMIN' ? undefined : eq(schema.customers.createdBy, req.user.id),
+    ));
+    if (!customer) return res.status(404).json({ error: 'Member not found.' });
+    const requestId = crypto.randomUUID();
+    const queued = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.memberRequests).values({
+        id: requestId, kind: 'REMOVE', requestedBy: req.user.id, customerId: customer.id, reason,
+      }).onConflictDoNothing().returning({ id: schema.memberRequests.id });
+      if (!created) return false;
+      await auditMembership(tx, req, 'MEMBER_REMOVAL_REQUESTED', customer.id, 'Member removal submitted for review.');
+      return true;
     });
+    if (!queued) return res.status(409).json({ error: 'A removal request is already pending.' });
+    res.status(202).json({ requestId, state: 'PENDING' });
+  } catch {
+    res.status(500).json({ error: 'Could not request removal.' });
+  }
+});
 
-    res.status(201).json(newCust);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+app.post('/api/member-requests/:id/review', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
+  const decision = req.body?.decision;
+  if (decision !== 'APPROVED' && decision !== 'REJECTED') {
+    return res.status(400).json({ error: 'Choose approve or reject.' });
+  }
+  try {
+    const { db } = getDb();
+    const requests = schema.memberRequests;
+    const outcome = await db.transaction(async (tx) => {
+      const [request] = await tx.select().from(requests).where(eq(requests.id, req.params.id)).for('update');
+      if (!request) return { status: 404, body: { error: 'Request not found.' } };
+      if (request.state !== 'PENDING') return { status: 409, body: { error: 'This request was already reviewed.' } };
+      let customerId = request.customerId;
+      if (decision === 'APPROVED' && request.kind === 'CREATE') {
+        if (!request.payload) return { status: 409, body: { error: 'Registration details are missing.' } };
+        const [branch] = await tx.select({ id: schema.branches.id }).from(schema.branches)
+          .where(and(eq(schema.branches.id, request.payload.branchId), eq(schema.branches.isActive, true)));
+        if (!branch) return { status: 409, body: { error: 'The member branch is inactive or missing.' } };
+        const member = await storeCustomer(tx, { ...request.payload, createdBy: request.requestedBy });
+        customerId = member.id;
+      }
+      if (decision === 'APPROVED' && request.kind === 'REMOVE') {
+        if (!customerId) return { status: 409, body: { error: 'Member is missing.' } };
+        const [archived] = await tx.update(schema.customers).set({ archivedAt: new Date() })
+          .where(and(eq(schema.customers.id, customerId), isNull(schema.customers.archivedAt)))
+          .returning({ id: schema.customers.id });
+        if (!archived) return { status: 409, body: { error: 'Member is already archived.' } };
+      }
+      await tx.update(requests).set({ state: decision, customerId, reviewedBy: req.user.id, reviewedAt: new Date() })
+        .where(eq(requests.id, request.id));
+      await auditMembership(tx, req, `MEMBER_${request.kind}_${decision}`, customerId ?? request.id, 'Super Admin reviewed the membership request.');
+      return { status: 200, body: { state: decision } };
+    });
+    res.status(outcome.status).json(outcome.body);
+  } catch (error: any) {
+    if (error?.cause?.code === '23505') return res.status(409).json({ error: 'A member with that identifier already exists.' });
+    res.status(500).json({ error: 'Could not review the request.' });
   }
 });
 
 // Groups
-app.get('/api/groups', requireAuth, async (req, res) => {
+app.get('/api/groups', requireAuth, requireWorkspace('groups'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1071,7 +1157,7 @@ app.get('/api/groups', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/groups', requireAuth, async (req, res) => {
+app.post('/api/groups', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'FIELD_OFFICER', 'CREDIT_OFFICER', 'LOAN_OFFICER'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1099,7 +1185,7 @@ app.post('/api/groups', requireAuth, async (req, res) => {
 });
 
 // Loan Products
-app.get('/api/products', requireAuth, async (req, res) => {
+app.get('/api/products', requireAuth, requireWorkspace('products'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1111,7 +1197,7 @@ app.get('/api/products', requireAuth, async (req, res) => {
 });
 
 // Loan Applications
-app.get('/api/applications', requireAuth, async (req, res) => {
+app.get('/api/applications', requireAuth, requireWorkspace('origination'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1122,7 +1208,7 @@ app.get('/api/applications', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/applications', requireAuth, async (req: any, res) => {
+app.post('/api/applications', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'FIELD_OFFICER', 'CREDIT_OFFICER', 'LOAN_OFFICER'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1179,13 +1265,8 @@ app.post('/api/applications', requireAuth, async (req: any, res) => {
   }
 });
 
-// Per BR-APPR-01: Branch Managers may approve up to this amount; anything
-// larger must be escalated to a Head Office Manager / Super Admin, who have
-// no cap here.
-const BRANCH_MANAGER_APPROVAL_LIMIT = 1_000_000;
-
 // Review Loan Application (Approve or Reject)
-app.patch('/api/applications/:id/review', requireAuth, requireRole('BRANCH_MANAGER', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'), async (req: any, res) => {
+app.patch('/api/applications/:id/review', requireAuth, requireRole('HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1218,16 +1299,6 @@ app.patch('/api/applications/:id/review', requireAuth, requireRole('BRANCH_MANAG
         return { status: 403, body: {
           error: 'Maker-checker violation: you submitted this application and cannot review your own submission. Escalate to another authorized reviewer.',
           code: 'SELF_APPROVAL_FORBIDDEN',
-        } };
-      }
-
-      // Tiered approval limit (BR-APPR-01): Branch Managers may only approve
-      // up to BRANCH_MANAGER_APPROVAL_LIMIT; larger amounts require Head
-      // Office / Super Admin sign-off.
-      if (action === 'APPROVE' && requester.role === 'BRANCH_MANAGER' && Number(approvedAmount) > BRANCH_MANAGER_APPROVAL_LIMIT) {
-        return { status: 403, body: {
-          error: `Branch Managers may approve loans up to TZS ${BRANCH_MANAGER_APPROVAL_LIMIT.toLocaleString()}. This amount (TZS ${Number(approvedAmount).toLocaleString()}) must be escalated to a Head Office Manager.`,
-          code: 'APPROVAL_LIMIT_EXCEEDED',
         } };
       }
 
@@ -1271,7 +1342,7 @@ app.patch('/api/applications/:id/review', requireAuth, requireRole('BRANCH_MANAG
 });
 
 // Disburse Loan (creates active loan, schedule of installments, updates application, generates double entry)
-app.post('/api/loans/disburse', requireAuth, requireRole('BRANCH_MANAGER', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN', 'ACCOUNTANT', 'CASHIER'), async (req: any, res) => {
+app.post('/api/loans/disburse', requireAuth, requireRole('HEAD_OFFICE_MANAGER', 'SUPER_ADMIN', 'ACCOUNTANT', 'CASHIER'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1452,7 +1523,7 @@ app.post('/api/loans/disburse', requireAuth, requireRole('BRANCH_MANAGER', 'HEAD
 });
 
 // Loans list
-app.get('/api/loans', requireAuth, async (req, res) => {
+app.get('/api/loans', requireAuth, requireWorkspace('servicing'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1464,7 +1535,7 @@ app.get('/api/loans', requireAuth, async (req, res) => {
 });
 
 // Loan Installments
-app.get('/api/loans/:id/installments', requireAuth, async (req, res) => {
+app.get('/api/loans/:id/installments', requireAuth, requireWorkspace('servicing'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1702,7 +1773,7 @@ async function postRepayment(
   return { status: 201, body: repaymentRecord };
 }
 
-app.post('/api/repayments', requireAuth, async (req: any, res) => {
+app.post('/api/repayments', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'ACCOUNTANT', 'CASHIER', 'COLLECTION_OFFICER'), async (req: any, res) => {
   try {
     const { db } = getDb();
     const result = await db.transaction((tx) => postRepayment(tx, req.body, req.user, req.ip));
@@ -1713,7 +1784,7 @@ app.post('/api/repayments', requireAuth, async (req: any, res) => {
   }
 });
 
-app.get('/api/repayments', requireAuth, async (req, res) => {
+app.get('/api/repayments', requireAuth, requireWorkspace('payments'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1725,7 +1796,7 @@ app.get('/api/repayments', requireAuth, async (req, res) => {
 });
 
 // Savings Accounts & Transactions
-app.get('/api/savings', requireAuth, async (req, res) => {
+app.get('/api/savings', requireAuth, requireWorkspace('savings'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1736,7 +1807,7 @@ app.get('/api/savings', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/savings/transaction', requireAuth, async (req: any, res) => {
+app.post('/api/savings/transaction', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'ACCOUNTANT', 'CASHIER'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1835,7 +1906,7 @@ app.post('/api/savings/transaction', requireAuth, async (req: any, res) => {
 });
 
 // Accounting: Chart of Accounts
-app.get('/api/accounting/coa', requireAuth, async (req, res) => {
+app.get('/api/accounting/coa', requireAuth, requireWorkspace('accounting'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1847,7 +1918,7 @@ app.get('/api/accounting/coa', requireAuth, async (req, res) => {
 });
 
 // Accounting: Trial Balance
-app.get('/api/accounting/trial-balance', requireAuth, async (req, res) => {
+app.get('/api/accounting/trial-balance', requireAuth, requireWorkspace('accounting'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1888,7 +1959,7 @@ app.get('/api/accounting/trial-balance', requireAuth, async (req, res) => {
 });
 
 // Accounting: Journal Entries
-app.get('/api/accounting/journal', requireAuth, async (req, res) => {
+app.get('/api/accounting/journal', requireAuth, requireWorkspace('accounting'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -1910,7 +1981,7 @@ app.get('/api/accounting/journal', requireAuth, async (req, res) => {
 });
 
 // Accounting: Post Manual Journal Voucher
-app.post('/api/accounting/journal', requireAuth, requireRole('ACCOUNTANT', 'BRANCH_MANAGER', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'), async (req: any, res) => {
+app.post('/api/accounting/journal', requireAuth, requireRole('ACCOUNTANT', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'), async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -2083,7 +2154,7 @@ app.post('/api/mobile-money/webhook', async (req, res) => {
   }
 });
 
-app.post('/api/mobile-money/simulate', requireAuth, async (req: any, res) => {
+app.post('/api/mobile-money/simulate', requireAuth, requireRole('SUPER_ADMIN', 'ACCOUNTANT'), async (req: any, res) => {
   if (!demoMode) return res.sendStatus(404);
   const { provider, accountReference, phoneNumber } = req.body;
   const amount = parseMoney(req.body.amount);
@@ -2102,7 +2173,7 @@ app.post('/api/mobile-money/simulate', requireAuth, async (req: any, res) => {
   }
 });
 
-app.get('/api/mobile-money/transactions', requireAuth, async (_req, res) => {
+app.get('/api/mobile-money/transactions', requireAuth, requireWorkspace('mobile_money'), async (_req, res) => {
   try {
     const transactions = await getDb().db.select().from(schema.mobileMoneyTransactions)
       .orderBy(desc(schema.mobileMoneyTransactions.receivedAt)).limit(100);
@@ -2112,7 +2183,7 @@ app.get('/api/mobile-money/transactions', requireAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/audit-logs', requireAuth, async (req, res) => {
+app.get('/api/audit-logs', requireAuth, requireWorkspace('audit'), async (req, res) => {
   try {
     await initDb();
     const { db } = getDb();
@@ -2124,7 +2195,7 @@ app.get('/api/audit-logs', requireAuth, async (req, res) => {
 });
 
 // Offline Sync Batch Endpoint
-app.post('/api/offline-sync', requireAuth, async (req: any, res) => {
+app.post('/api/offline-sync', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANAGER', 'FIELD_OFFICER', 'CREDIT_OFFICER', 'LOAN_OFFICER', 'COLLECTION_OFFICER'), async (req: any, res) => {
   const { deviceId, queue } = req.body;
   if (!Array.isArray(queue) || queue.length > 100) {
     return res.status(400).json({ error: 'Supply an array of at most 100 queued operations.' });

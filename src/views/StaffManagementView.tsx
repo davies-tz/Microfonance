@@ -56,7 +56,7 @@ export const StaffManagementView: React.FC = () => {
     phone: '',
     role: 'FIELD_OFFICER' as RoleName,
     branchId: '',
-    initialPassword: 'Imara@2025',
+    initialPassword: '',
   });
 
   const isAuthorized = canManageStaff(currentUser?.role);
@@ -120,7 +120,7 @@ export const StaffManagementView: React.FC = () => {
         phone: '',
         role: 'FIELD_OFFICER',
         branchId: '',
-        initialPassword: 'Imara@2025',
+        initialPassword: '',
       });
       fetchStaff();
     } catch (err: any) {
@@ -203,7 +203,7 @@ export const StaffManagementView: React.FC = () => {
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Hierarchical staff directory. Only authorized Managers and Super Admins can provision employee accounts.
+            Hierarchical staff directory. Super Admins provision employee accounts.
           </p>
         </div>
 
@@ -574,12 +574,15 @@ export const StaffManagementView: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Temporary Initial Password</label>
                 <div className="flex items-center gap-2">
                   <input
-                    type="text"
+                    type="password"
+                    required
+                    minLength={14}
+                    autoComplete="new-password"
                     value={formData.initialPassword}
                     onChange={(e) => setFormData({ ...formData, initialPassword: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-emerald-400 focus:outline-none focus:border-emerald-500"
                   />
-                  <span className="text-[11px] text-slate-400 shrink-0">Default: Imara@2025</span>
+
                 </div>
               </div>
 

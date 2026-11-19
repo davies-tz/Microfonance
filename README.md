@@ -117,3 +117,14 @@ Verified locally: the app builds successfully with the production Docker image (
 ## Deploying Elsewhere (containers / VPS)
 
 For a simpler deploy with no database-provider hunting or serverless caveats, the same [Dockerfile](Dockerfile) used for local testing runs unchanged on any host that supports a long-running container — Render, Railway, Fly.io, Google Cloud Run, or a plain VPS. This avoids the external-Postgres and serverless-state requirements above entirely.
+
+## Staff access and membership approvals
+
+Apply `migrations/20261120_member_requests.sql` to existing databases before deploying the membership approval workflow. On a new local database, `npm run db:push` creates the current schema.
+
+- **Super Admin** manages staff, resets staff access, creates branches, and reviews registration and removal requests in Customers & KYC.
+- **Head Office Manager** has portfolio and finance oversight, including loan decisions. Staff administration and membership reviews belong to Super Admin.
+- **Branch Manager** uses Customers & KYC to submit registration and removal requests. The server assigns requests to the manager's branch and lists members registered by that manager after approval. Existing members without creator attribution remain accessible to authorized central users.
+- **Field, Credit and Loan Officers** can submit member registration requests and work in the lending and field workspace. **Collection Officers** record collections and use field sync.
+- **Accountants and Cashiers** use finance and settlement modules. **Auditors** have read-only access to the audit, finance and reporting views. **Customer** accounts have no staff workspace.
+- Approved removal archives the member in the customer directory and preserves loan, savings and audit history.

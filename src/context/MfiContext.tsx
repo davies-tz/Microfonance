@@ -107,7 +107,10 @@ interface MfiContextType {
   providerTransactions: ProviderWebhookTransaction[];
 
   // Core Actions
-  createCustomer: (customerData: Partial<Customer>) => Promise<Customer>;
+  createCustomer: (customerData: Partial<Customer>) => Promise<Customer | null>;
+  refreshWorkspace: () => Promise<void>;
+  requestMemberRemoval: (id: string, reason: string) => Promise<void>;
+  reviewMemberRequest: (id: string, decision: 'APPROVED' | 'REJECTED') => Promise<void>;
   verifyKycDocument: (customerId: string, docId: string, status: 'VERIFIED' | 'REJECTED', reason?: string) => void;
   createLendingGroup: (groupData: Partial<LendingGroup>) => Promise<LendingGroup>;
   createLoanApplication: (appData: Partial<LoanApplication>) => Promise<LoanApplication>;
@@ -319,6 +322,15 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Initial Load from Cloud SQL Backend
   const loadCloudSqlData = useCallback(async () => {
+    const headers = authHeaders();
+    const readResponse = async (response: Response) => {
+      const data = await response.json();
+      if (headers.Authorization !== authHeaders().Authorization) {
+        throw new Error('The staff session changed while loading the workspace.');
+      }
+      return data;
+    };
+    if (!headers.Authorization) return;
     try {
       const [
         summaryRes,
@@ -334,28 +346,28 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         journalsRes,
         auditRes,
       ] = await Promise.all([
-        fetch('/api/summary', { headers: authHeaders() }),
-        fetch('/api/branches', { headers: authHeaders() }),
-        fetch('/api/customers', { headers: authHeaders() }),
-        fetch('/api/groups', { headers: authHeaders() }),
-        fetch('/api/products', { headers: authHeaders() }),
-        fetch('/api/applications', { headers: authHeaders() }),
-        fetch('/api/loans', { headers: authHeaders() }),
-        fetch('/api/repayments', { headers: authHeaders() }),
-        fetch('/api/savings', { headers: authHeaders() }),
-        fetch('/api/accounting/coa', { headers: authHeaders() }),
-        fetch('/api/accounting/journal', { headers: authHeaders() }),
-        fetch('/api/audit-logs', { headers: authHeaders() }),
+        fetch('/api/summary', { headers }),
+        fetch('/api/branches', { headers }),
+        fetch('/api/customers', { headers }),
+        fetch('/api/groups', { headers }),
+        fetch('/api/products', { headers }),
+        fetch('/api/applications', { headers }),
+        fetch('/api/loans', { headers }),
+        fetch('/api/repayments', { headers }),
+        fetch('/api/savings', { headers }),
+        fetch('/api/accounting/coa', { headers }),
+        fetch('/api/accounting/journal', { headers }),
+        fetch('/api/audit-logs', { headers }),
       ]);
 
-      const mobileMoney = await fetch('/api/mobile-money/transactions', { headers: authHeaders() }).catch(() => null);
+      const mobileMoney = await fetch('/api/mobile-money/transactions', { headers }).catch(() => null);
       if (mobileMoney?.ok) {
-        const rows = await mobileMoney.json();
+        const rows = await readResponse(mobileMoney);
         setProviderTransactions(rows);
       }
-      const customerRows = customersRes.ok ? await customersRes.json() : [];
-      const productRows = productsRes.ok ? await productsRes.json() : [];
-      const loanRows = loansRes.ok ? await loansRes.json() : [];
+      const customerRows = customersRes.ok ? await readResponse(customersRes) : [];
+      const productRows = productsRes.ok ? await readResponse(productsRes) : [];
+      const loanRows = loansRes.ok ? await readResponse(loansRes) : [];
       const customersById = new Map<string, any>(customerRows.map((customer: any) => [customer.id, customer]));
       const productsById = new Map<string, any>(productRows.map((product: any) => [product.id, product]));
       const customerName = (id: string) => {
@@ -363,9 +375,9 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return customer ? `${customer.firstName} ${customer.lastName}` : '';
       };
 
-      if (summaryRes.ok) setSummaryMetrics(await summaryRes.json());
+      if (summaryRes.ok) setSummaryMetrics(await readResponse(summaryRes));
       if (branchesRes.ok) {
-        const data = await branchesRes.json();
+        const data = await readResponse(branchesRes);
         setBranches(data);
       }
       if (customersRes.ok) {
@@ -404,7 +416,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCustomers(mappedCustomers);
       }
       if (groupsRes.ok) {
-        const data = await groupsRes.json();
+        const data = await readResponse(groupsRes);
         const mappedGroups: LendingGroup[] = data.map((g: any) => ({
           id: g.id,
           groupNumber: g.groupNumber,
@@ -443,7 +455,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setLoanProducts(mappedProds);
       }
       if (appsRes.ok) {
-        const data = await appsRes.json();
+        const data = await readResponse(appsRes);
         const mappedApps: LoanApplication[] = data.map((a: any) => ({
           id: a.id,
           applicationNumber: a.applicationNumber,
@@ -495,7 +507,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setLoans(mappedLoans);
       }
       if (repaymentsRes.ok) {
-        const rows = await repaymentsRes.json();
+        const rows = await readResponse(repaymentsRes);
         const loansById = new Map<string, any>(loanRows.map((loan: any) => [loan.id, loan]));
         setPayments(rows.map((row: any) => {
           const loan = loansById.get(row.loanId);
@@ -503,7 +515,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }));
       }
       if (savingsRes.ok) {
-        const data = await savingsRes.json();
+        const data = await readResponse(savingsRes);
         const mappedSavings: SavingsAccount[] = data.map((s: any) => ({
           id: s.id,
           accountNumber: s.accountNumber,
@@ -519,7 +531,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSavingsAccounts(mappedSavings);
       }
       if (coaRes.ok) {
-        const data = await coaRes.json();
+        const data = await readResponse(coaRes);
         const mappedCoa: ChartOfAccount[] = data.map((c: any) => ({
           id: c.id,
           code: c.code,
@@ -532,7 +544,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setChartOfAccounts(mappedCoa);
       }
       if (journalsRes.ok) {
-        const data = await journalsRes.json();
+        const data = await readResponse(journalsRes);
         const mappedJournals: JournalEntry[] = data.map((j: any) => ({
           id: j.id,
           entryNumber: j.entryNumber,
@@ -557,7 +569,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setJournals(mappedJournals);
       }
       if (auditRes.ok) {
-        const data = await auditRes.json();
+        const data = await readResponse(auditRes);
         const mappedLogs: AuditLog[] = data.map((a: any) => ({
           id: a.id,
           userId: a.userId,
@@ -583,7 +595,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     void loadCloudSqlData();
   }, [authToken, loadCloudSqlData]);
 
-  const createCustomer = async (customerData: Partial<Customer>): Promise<Customer> => {
+  const createCustomer = async (customerData: Partial<Customer>): Promise<Customer | null> => {
     const id = `cust-${Date.now()}`;
     const customerNumber = `CUST-${new Date().toISOString().slice(0, 7).replace('-', '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -623,6 +635,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       userId: activeUser.id,
       userName: `${activeUser.firstName} ${activeUser.lastName}`,
     });
+    if (saved.state === 'PENDING') return null;
     const customer = { ...newCust, id: saved.id, customerNumber: saved.customerNumber };
     setCustomers((previous) => [customer, ...previous]);
     void loadCloudSqlData();
@@ -1039,6 +1052,12 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         auditLogs,
         providerTransactions,
         createCustomer,
+        refreshWorkspace: loadCloudSqlData,
+        requestMemberRemoval: async (id, reason) => { await postToServer(`/api/customers/${encodeURIComponent(id)}/removal-request`, { reason }); },
+        reviewMemberRequest: async (id, decision) => {
+          await postToServer(`/api/member-requests/${encodeURIComponent(id)}/review`, { decision });
+          await loadCloudSqlData();
+        },
         verifyKycDocument,
         createLendingGroup,
         createLoanApplication,

@@ -1,3 +1,4 @@
+import { canAccessTab } from '../lib/workspaceAccess';
 import React, { useState } from 'react';
 import {
   LayoutDashboard,
@@ -24,12 +25,12 @@ import { useMfi } from '../context/MfiContext';
 import { translations } from '../lib/i18n';
 
 interface MobileBottomNavProps {
-  activeTab: TabType;
+  activeTab: TabType | undefined;
   setActiveTab: (tab: TabType) => void;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, setActiveTab }) => {
-  const { language, offlineQueue } = useMfi();
+  const { currentUser, language, offlineQueue } = useMfi();
   const t = translations[language];
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -56,10 +57,12 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
     { id: 'about_demo', label: t.aboutDemo, icon: <Sparkles className="w-4 h-4 text-emerald-400" /> },
   ];
 
+  const visibleDrawerItems = drawerItems.filter((item) => item.id === 'about_demo' ? demoMode : canAccessTab(currentUser?.role, item.id));
+
   return (
     <>
       {/* Mobile Drawer Backdrop & Menu */}
-      {drawerOpen && (
+      {drawerOpen && visibleDrawerItems.length > 0 && (
         <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm md:hidden animate-in fade-in" onClick={() => setDrawerOpen(false)}>
           <div
             className="absolute bottom-16 inset-x-0 bg-slate-900 border-t border-slate-800 rounded-t-2xl p-4 shadow-2xl max-h-[75vh] overflow-y-auto"
@@ -72,7 +75,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {drawerItems.filter((item) => demoMode || item.id !== 'about_demo').map((item) => (
+              {visibleDrawerItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
@@ -97,7 +100,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
       {/* Bottom Fixed Navigation Bar */}
       <nav className="fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 border-t border-slate-800 backdrop-blur-md md:hidden px-2 py-1.5 shadow-lg">
         <div className="flex items-center justify-around">
-          {mainItems.map((item) => {
+          {mainItems.filter((item) => canAccessTab(currentUser?.role, item.id)).map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
@@ -123,6 +126,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
             );
           })}
 
+          {visibleDrawerItems.length > 0 && (
           <button
             aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen(!drawerOpen)}
@@ -133,6 +137,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, set
             <Menu className="w-5 h-5" />
             <span className="text-[11px] mt-0.5 tracking-tight">{t.moreMenu.split(' ')[0]}</span>
           </button>
+          )}
         </div>
       </nav>
     </>

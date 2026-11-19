@@ -1,3 +1,4 @@
+import { canAccessTab } from '../lib/workspaceAccess';
 import React from 'react';
 import {
   ArrowLeftRight,
@@ -39,7 +40,7 @@ export type TabType =
   | 'about_demo';
 
 interface SidebarProps {
-  activeTab: TabType;
+  activeTab: TabType | undefined;
   setActiveTab: (tab: TabType) => void;
 }
 
@@ -132,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
 
       {/* Navigation list */}
       <nav aria-label={language === 'sw' ? 'Menyu kuu' : 'Main navigation'} className="flex-1 overflow-y-auto p-3 space-y-1">
-        {navItems.map((item) => {
+        {navItems.filter((item) => item.id === 'about_demo' || canAccessTab(currentUser?.role, item.id)).map((item) => {
           const isActive = activeTab === item.id;
           return (
             <div key={item.id}>
