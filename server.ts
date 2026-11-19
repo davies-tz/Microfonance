@@ -2130,7 +2130,7 @@ async function startServer() {
 
   const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
   app.listen(PORT, host, () => {
-    console.log(`Imara Finance running on http://${host}:${PORT}`);
+    console.log(`Mastermind Microfinance running on http://${host}:${PORT}`);
   });
 }
 

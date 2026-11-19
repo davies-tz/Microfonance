@@ -1,12 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
-title Imara Finance - Launcher
+title Mastermind Microfinance - Launcher
 cd /d "%~dp0"
 
 :menu
 cls
 echo ================================================
-echo   IMARA FINANCE - Launcher
+echo   Mastermind Microfinance - Launcher
 echo ================================================
 echo.
 echo   1. Run locally  (Node.js + local PostgreSQL)

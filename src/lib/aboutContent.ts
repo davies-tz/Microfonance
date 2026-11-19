@@ -54,7 +54,7 @@ export const getAboutContent = (lang: Language) => {
 
   return {
     brand: {
-      name: 'IMARA Finance',
+      name: 'Mastermind Microfinance',
       platformCategory: isEn ? 'SaaS Microfinance Platform' : 'Jukwaa la SaaS la Mikopo Midogo',
       tagline: isEn ? 'Smarter Microfinance. Stronger Communities.' : 'Huduma Bora za Mikopo. Jamii Imara Zaidi.',
       supportingText: isEn
@@ -138,13 +138,13 @@ export const getAboutContent = (lang: Language) => {
 
     about: {
       headingBadge: isEn ? 'About the Platform' : 'Kuhusu Jukwaa',
-      title: isEn ? 'About IMARA Finance' : 'Kuhusu IMARA Finance',
+      title: isEn ? 'About Mastermind Microfinance' : 'Kuhusu Mastermind Microfinance',
       paragraph1:
-        'IMARA Finance is a cloud-based microfinance management platform designed to help microfinance institutions, SACCOs, lending groups, and financial service providers manage their daily operations from one secure system.',
+        'Mastermind Microfinance is a cloud-based microfinance management platform designed to help microfinance institutions, SACCOs, lending groups, and financial service providers manage their daily operations from one secure system.',
       paragraph2:
         'The platform connects managers, field officers, accountants, and administrators through a centralized workspace where they can register customers, manage groups, process loan applications, monitor repayments, track overdue accounts, manage savings, and generate financial reports.',
       paragraph3:
-        'IMARA Finance is built for real operational environments, with role-based access, mobile-first field operations, English and Kiswahili language support, secure data storage, offline data collection, synchronization, audit trails, and digital payment integration.',
+        'Mastermind Microfinance is built for real operational environments, with role-based access, mobile-first field operations, English and Kiswahili language support, secure data storage, offline data collection, synchronization, audit trails, and digital payment integration.',
     },
 
     features: {
@@ -461,8 +461,8 @@ export const getAboutContent = (lang: Language) => {
         ? 'Users can switch between English and fluent localized Kiswahili throughout the application with zero page reloads.'
         : 'Watumiaji wanaweza kubadili lugha kwa urahisi kati ya Kiingereza na Kiswahili fasaha katika kurasa zote za mfumo bila kupoteza kazi zao.',
       description: isEn
-        ? 'East African microfinance operations bridge rural market traders, village solidarity groups, and regional boardrooms. IMARA Finance provides full institutional parity in both languages: from loan contract agreements and SMS payment confirmations to executive balance sheets.'
-        : 'Uendeshaji wa mikopo midogo unahusisha wafanyabiashara wa masokoni, vikundi vya vijijini, na bodi za wakurugenzi. IMARA Finance inatoa uwezo kamili katika lugha zote mbili: kuanzia mikataba ya mikopo na ujumbe mfupi wa SMS hadi ripoti kuu za fedha.',
+        ? 'East African microfinance operations bridge rural market traders, village solidarity groups, and regional boardrooms. Mastermind Microfinance provides full institutional parity in both languages: from loan contract agreements and SMS payment confirmations to executive balance sheets.'
+        : 'Uendeshaji wa mikopo midogo unahusisha wafanyabiashara wa masokoni, vikundi vya vijijini, na bodi za wakurugenzi. Mastermind Microfinance inatoa uwezo kamili katika lugha zote mbili: kuanzia mikataba ya mikopo na ujumbe mfupi wa SMS hadi ripoti kuu za fedha.',
     },
 
     mobileFirst: {

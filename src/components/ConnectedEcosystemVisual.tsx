@@ -205,7 +205,7 @@ export const ConnectedEcosystemVisual: React.FC<ConnectedEcosystemVisualProps> =
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-sm text-white">IMARA Secure Cloud Infrastructure</span>
+              <span className="font-extrabold text-sm text-white">Mastermind Microfinance Cloud Infrastructure</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 TLS 1.3
               </span>
