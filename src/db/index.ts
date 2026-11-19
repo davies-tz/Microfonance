@@ -12,7 +12,7 @@ let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 export function getDb() {
   if (!dbInstance) {
-    const host = process.env.SQL_HOST;
+    const host = process.env.SQL_HOST?.trim();
     const user = process.env.SQL_USER || process.env.SQL_ADMIN_USER;
     const password = process.env.SQL_PASSWORD || process.env.SQL_ADMIN_PASSWORD;
     const database = process.env.SQL_DB_NAME;
