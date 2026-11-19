@@ -23,6 +23,7 @@ import {
   Activity,
   FileCheck
 } from 'lucide-react';
+import { BranchManagement } from './BranchManagement';
 import { useMfi } from '../context/MfiContext';
 import { User, RoleName } from '../types';
 import { canManageStaff, hasPermission } from '../lib/rbac';
@@ -54,7 +55,7 @@ export const StaffManagementView: React.FC = () => {
     email: '',
     phone: '',
     role: 'FIELD_OFFICER' as RoleName,
-    branchId: 'br-kariakoo',
+    branchId: '',
     initialPassword: 'Imara@2025',
   });
 
@@ -85,7 +86,7 @@ export const StaffManagementView: React.FC = () => {
 
   const handleCreateStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.firstName || !formData.lastName || !formData.email || !formData.role) {
+    if (!formData.firstName || !formData.lastName || !formData.email || !formData.role || !formData.branchId) {
       setStatusMessage({ type: 'error', text: 'Please fill in all required fields.' });
       return;
     }
@@ -118,7 +119,7 @@ export const StaffManagementView: React.FC = () => {
         email: '',
         phone: '',
         role: 'FIELD_OFFICER',
-        branchId: 'br-kariakoo',
+        branchId: '',
         initialPassword: 'Imara@2025',
       });
       fetchStaff();
@@ -209,14 +210,22 @@ export const StaffManagementView: React.FC = () => {
         {isAuthorized && (
           <button
             type="button"
+            disabled={branches.length === 0}
             onClick={() => setIsCreateModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-600/20 transition"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
             <span>Create Employee Account</span>
           </button>
         )}
       </div>
+
+      {currentUser?.role === 'SUPER_ADMIN' && <BranchManagement />}
+      {isAuthorized && branches.length === 0 && (
+        <p className="text-sm text-slate-400">
+          {language === 'sw' ? 'Ongeza tawi kabla ya kuunda akaunti ya mfanyakazi.' : 'Add a branch before creating an employee account.'}
+        </p>
+      )}
 
       {/* Security Notice Banner */}
       <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-start gap-3">
@@ -546,10 +555,12 @@ export const StaffManagementView: React.FC = () => {
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Assigned Branch *</label>
                   <select
+                    required
                     value={formData.branchId}
                     onChange={(e) => setFormData({ ...formData, branchId: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                   >
+                    <option value="">Select a branch</option>
                     {branches.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name} ({b.region})
@@ -582,7 +593,7 @@ export const StaffManagementView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition"
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
                 >
                   Create Account
                 </button>

@@ -83,6 +83,7 @@ interface MfiContextType {
   currentBranchId: string;
   setCurrentBranchId: (branchId: string) => void;
   branches: Branch[];
+  createBranch: (branch: Pick<Branch, 'code' | 'name' | 'region' | 'phone'> & { address: string }) => Promise<Branch>;
   isOnline: boolean;
   setIsOnline: (online: boolean) => void;
   offlineQueue: OfflineSyncRecord[];
@@ -282,6 +283,12 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error(data?.error || 'The server could not save this change.');
     }
     return data;
+  };
+
+  const createBranch: MfiContextType['createBranch'] = async (details) => {
+    const branch: Branch = await postToServer('/api/branches', details);
+    setBranches((previous) => [...previous, branch]);
+    return branch;
   };
 
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -1011,6 +1018,7 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentBranchId,
         setCurrentBranchId,
         branches,
+        createBranch,
         isOnline,
         setIsOnline,
         offlineQueue,

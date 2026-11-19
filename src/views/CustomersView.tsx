@@ -48,7 +48,7 @@ export const CustomersView: React.FC = () => {
   const [businessType, setBusinessType] = useState('');
   const [monthlyRevenue, setMonthlyRevenue] = useState(2500000);
   const [monthlyExpenses, setMonthlyExpenses] = useState(1200000);
-  const [branchId, setBranchId] = useState(branches[0]?.id || 'br-kariakoo');
+  const [branchId, setBranchId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const filteredCustomers = customers.filter((c) => {
@@ -64,8 +64,8 @@ export const CustomersView: React.FC = () => {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!firstName || !lastName || !phone) {
-      showToast('warning', 'Validation', 'First name, last name, and phone number are required.');
+    if (!firstName || !lastName || !phone || !branchId) {
+      showToast('warning', 'Validation', 'First name, last name, phone number, and branch are required.');
       return;
     }
 
@@ -533,10 +533,12 @@ export const CustomersView: React.FC = () => {
               <div>
                 <label className="block text-slate-400 mb-1">{t.branch}</label>
                 <select
+                  required
                   value={branchId}
                   onChange={(e) => setBranchId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white focus:border-emerald-500 focus:outline-none"
                 >
+                  <option value="">{language === 'sw' ? 'Chagua tawi' : 'Select a branch'}</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
