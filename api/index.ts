@@ -6,6 +6,7 @@
 // serving middleware from running here, since Vercel serves the built
 // frontend as static output and only routes /api/* to this function (see
 // vercel.json).
-import { app } from '../server.ts';
+// Match the emitted JavaScript paths in the deployed function.
+import { app } from '../server.js';
 
 export default app;

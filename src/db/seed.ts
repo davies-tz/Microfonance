@@ -1,5 +1,5 @@
-import { getDb } from './index.ts';
-import * as schema from './schema.ts';
+import { getDb } from './index.js';
+import * as schema from './schema.js';
 import { count, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
