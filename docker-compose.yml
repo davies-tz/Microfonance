@@ -21,7 +21,10 @@ services:
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_IMARA_DEMO_MODE: ${IMARA_DEMO_MODE:-false}
     restart: unless-stopped
     env_file:
       - .env
@@ -29,6 +32,8 @@ services:
       # Overrides .env so the app talks to the "db" service on the compose
       # network instead of localhost.
       SQL_HOST: db
+      SQL_PORT: 5432
+      SQL_SSL: "false"
       SQL_DB_NAME: ${SQL_DB_NAME:-imara_mfi}
       SQL_ADMIN_USER: ${SQL_ADMIN_USER:-postgres}
       SQL_ADMIN_PASSWORD: ${SQL_ADMIN_PASSWORD:-postgres}

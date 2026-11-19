@@ -29,7 +29,7 @@ export const OfflineSyncView: React.FC = () => {
   const t = translations[language];
 
   const [selectedLoanId, setSelectedLoanId] = useState(loans[0]?.id || '');
-  const [amount, setAmount] = useState<number>(50000);
+  const [amount, setAmount] = useState<number>(0);
   const [offlineMethod, setOfflineMethod] = useState<'CASH' | 'MOBILE_MONEY'>('CASH');
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -38,12 +38,12 @@ export const OfflineSyncView: React.FC = () => {
 
   const handleQueueCollection = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLoanId || amount <= 0) return;
+    if (!selectedLoanId || !Number.isSafeInteger(amount) || amount <= 0) return;
 
     const loan = loans.find((l) => l.id === selectedLoanId);
     if (!loan) return;
 
-    const offlineReceipt = `OFFLINE-REC-${Date.now().toString().slice(-6)}`;
+    const offlineReceipt = `OFFLINE-${crypto.randomUUID()}`;
 
     addOfflineRecord({
       operationType: 'COLLECTION_PAYMENT',
@@ -65,20 +65,18 @@ export const OfflineSyncView: React.FC = () => {
       language === 'sw' ? 'Malipo Yamehifadhiwa Kwenye Kifaa' : 'Queued Locally on Device',
       language === 'sw'
         ? `Risiti ya shambani ${offlineReceipt} kwa mteja ${loan.customerName} imehifadhiwa offline.`
-        : `Field receipt ${offlineReceipt} for ${loan.customerName} queued in local offline database.`
+        : `Field receipt ${offlineReceipt} for ${loan.customerName} queued on this device.`
     );
   };
 
   const handleTriggerSync = async () => {
     setIsSyncing(true);
     try {
-      await syncOfflineQueue();
+      const synced = await syncOfflineQueue();
       showToast(
-        'success',
-        language === 'sw' ? 'Usawazishaji Umekamilika' : 'Sync Completed',
-        language === 'sw'
-          ? 'Miamala yote ya shambani imesawazishwa kwenye Cloud SQL na Leja Kuu ya BOT.'
-          : 'All offline collections successfully replayed and synced to Central Cloud SQL database.'
+        'info',
+        language === 'sw' ? 'Matokeo ya usawazishaji' : 'Sync results',
+        language === 'sw' ? `Miamala mipya iliyohifadhiwa: ${synced}.` : `New collections posted: ${synced}.`
       );
     } catch (err: any) {
       showToast('error', 'Sync Error', err.message);

@@ -14,11 +14,12 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install dependencies first for better layer caching
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Copy the rest of the source and build the frontend + bundle the server
 COPY . .
+ARG VITE_IMARA_DEMO_MODE=false
 RUN npm run build
 
 ENV NODE_ENV=production

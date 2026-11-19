@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useMfi } from '../context/MfiContext';
 import { translations, Language } from '../lib/i18n';
+import { demoMode } from '../lib/demo';
 import { TabType } from '../components/Sidebar';
 import heroIllustration from '../assets/images/imara_microfinance_hero_1788957761197.jpg';
 
@@ -47,14 +48,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
   const t = translations[language];
 
   // Form State
-  const [identifier, setIdentifier] = useState('amina.manager');
-  const [password, setPassword] = useState('Imara@2025');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [capsLockActive, setCapsLockActive] = useState(false);
-  const [showDemoAccounts, setShowDemoAccounts] = useState(true);
+  const [showDemoAccounts, setShowDemoAccounts] = useState(false);
 
   // Forgot Password Modal State
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
@@ -227,180 +228,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between font-sans selection:bg-emerald-500 selection:text-slate-950">
-      {/* Top Bar with Language Toggle & System Status */}
-      <header className="w-full px-4 sm:px-8 py-3.5 border-b border-slate-900 bg-slate-950/80 backdrop-blur-md flex items-center justify-between z-30">
-        <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-950/60 font-black">
-            <Building2 className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">{t.appName}</span>
-              <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/25">
-                Core Banking
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 hidden xs:block">{t.appSubtitle}</p>
-          </div>
+    <div className="imara-login">
+      <section className="imara-login-story" aria-label={t.appName}>
+        <img src={heroIllustration} alt="" className="imara-login-photo" />
+        <div className="imara-login-brand">
+          <span className="imara-mark"><Building2 size={21} /></span>
+          <span>Imara Finance<small>{language === 'sw' ? 'Mfumo wa fedha' : 'Core banking platform'}</small></span>
         </div>
+        <div className="imara-login-message">
+          <h2>{language === 'sw' ? 'Huduma za fedha zilizo karibu na jamii.' : 'Banking built around your community.'}</h2>
+          <p>{language === 'sw'
+            ? 'Simamia mikopo, akiba na malipo ya wateja katika mfumo mmoja.'
+            : 'Manage loans, savings and customer payments in one workspace.'}</p>
+        </div>
+      </section>
 
-        <div className="flex items-center space-x-2 sm:space-x-3">
-          {/* BOT Regulatory Stamp */}
-          <div className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px] text-slate-300">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{t.botTier2License}</span>
-          </div>
-
-          {/* Bilingual Switcher */}
-          <button
-            type="button"
-            onClick={() => setLanguage(language === 'en' ? 'sw' : 'en')}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 transition-all shadow-sm"
-            title={language === 'en' ? 'Badili kwenda Kiswahili' : 'Switch to English'}
-          >
-            <Languages className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="uppercase">{language === 'en' ? 'Kiswahili' : 'English'}</span>
+      <main className="imara-login-main">
+        <div className="imara-login-tools">
+          <button type="button" onClick={() => setLanguage(language === 'en' ? 'sw' : 'en')}>
+            <Languages size={16} /> {language === 'en' ? 'Kiswahili' : 'English'}
           </button>
-
-          {/* About & Demo View Link */}
-          {onViewAboutDemo && (
-            <button
-              type="button"
-              onClick={onViewAboutDemo}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-all shadow-sm"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{t.aboutDemo}</span>
-            </button>
-          )}
         </div>
-      </header>
-
-      {/* Main Split-Screen Content */}
-      <main className="flex-1 flex flex-col lg:flex-row max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 items-center justify-center gap-8 lg:gap-12">
-        {/* Left Side: Editorial Microfinance Showcase Composition */}
-        <div className="w-full lg:w-7/12 flex flex-col justify-center space-y-6">
-          {/* Visual Hero Container with Real Illustration */}
-          <div className="relative rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-900/60 shadow-2xl">
-            {/* Image Banner */}
-            <div className="relative h-64 sm:h-80 md:h-96 w-full overflow-hidden">
-              <img
-                src={heroIllustration}
-                alt="Microfinance Banking in Tanzania"
-                className="w-full h-full object-cover object-center transform hover:scale-105 transition-transform duration-700 ease-out"
-                referrerPolicy="no-referrer"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
-
-              {/* Floating Live Indicator Badge */}
-              <div className="absolute top-4 left-4 flex items-center space-x-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/60 shadow-lg">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span className="text-[11px] font-semibold text-white tracking-wide uppercase">
-                  {language === 'sw' ? 'Mtandao Salama wa Fedha' : 'Secure Fintech Mesh'}
-                </span>
-              </div>
-
-              {/* In-Image Impact Statement */}
-              <div className="absolute bottom-4 left-4 right-4">
-                <p className="text-xs uppercase tracking-widest text-emerald-400 font-bold mb-1">
-                  {language === 'sw' ? 'Uwezeshaji Kiuchumi Tanzania' : 'Financial Inclusion & Community Growth'}
-                </p>
-                <h2 className="text-xl sm:text-2xl font-bold text-white leading-snug">
-                  {language === 'sw'
-                    ? 'Mfumo Rasmi wa Uendeshaji Benki Ndogo na Mikopo ya Vikundi'
-                    : 'Institutional Microfinance Core for Community Solidarity & Enterprise'}
-                </h2>
-              </div>
-            </div>
-
-            {/* Impact Metrics Strip */}
-            <div className="grid grid-cols-3 divide-x divide-slate-800/80 bg-slate-900/90 p-4">
-              <div className="px-2 sm:px-4">
-                <div className="flex items-center space-x-1.5 text-emerald-400 mb-0.5">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  <span className="text-xs font-bold">98.4%</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  {language === 'sw' ? 'Kiwango cha Urejeshaji' : 'Repayment Rate'}
-                </p>
-              </div>
-
-              <div className="px-2 sm:px-4">
-                <div className="flex items-center space-x-1.5 text-sky-400 mb-0.5">
-                  <Users className="w-3.5 h-3.5" />
-                  <span className="text-xs font-bold">14,200+</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  {language === 'sw' ? 'Wajasiriamali Hai' : 'Active Borrowers'}
-                </p>
-              </div>
-
-              <div className="px-2 sm:px-4">
-                <div className="flex items-center space-x-1.5 text-amber-400 mb-0.5">
-                  <Smartphone className="w-3.5 h-3.5" />
-                  <span className="text-xs font-bold">100%</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  {language === 'sw' ? 'Malipo Kidijitali (M-Pesa/Airtel)' : 'Mobile Money Integrated'}
-                </p>
-              </div>
-            </div>
+        <div className="imara-login-form">
+          <div className="mb-8">
+            <span className="imara-section-label"><Lock size={14} />{t.secureAccessNote}</span>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight text-white">{t.welcomeBack}</h1>
+            <p className="mt-2 text-sm text-slate-400">{t.signInPrompt}</p>
           </div>
-
-          {/* Value Pillars Badges */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="flex items-start space-x-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 text-emerald-400">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="font-bold text-slate-200">
-                  {language === 'sw' ? 'Leja Kuu ya Uhasibu (Double-Entry)' : 'Double-Entry General Ledger'}
-                </p>
-                <p className="text-slate-400 text-[11px] mt-0.5">
-                  {language === 'sw'
-                    ? 'Uzingatiaji kanuni za BOT na viwango vya IFRS kwa taasisi za fedha.'
-                    : 'Compliant with Bank of Tanzania Microfinance Regulations & IFRS.'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
-              <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center flex-shrink-0 text-sky-400">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="font-bold text-slate-200">
-                  {language === 'sw' ? 'Njia ya Nje ya Mtandao Nyanjani' : 'Resilient Offline Field Sync'}
-                </p>
-                <p className="text-slate-400 text-[11px] mt-0.5">
-                  {language === 'sw'
-                    ? 'Maafisa wanakusanya marejesho hata vijijini bila muunganisho wa data.'
-                    : 'Field staff register loans & collections in remote areas seamlessly.'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side: Primary Secure Sign-In Portal */}
-        <div className="w-full lg:w-5/12 max-w-md">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative">
-            {/* Header / Welcoming */}
-            <div className="mb-6">
-              <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-semibold text-emerald-400 mb-2.5">
-                <Lock className="w-3.5 h-3.5" />
-                <span>{t.securePortal}</span>
-              </div>
-              <h1 className="text-2xl font-black tracking-tight text-white">
-                {t.loginWelcome}
-              </h1>
-              <p className="text-xs text-slate-400 mt-1">
-                {t.loginInstructions}
-              </p>
-            </div>
-
             {/* Error Message Notification */}
             {errorMessage && (
               <div
@@ -423,7 +277,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
                   htmlFor="login-identifier"
                   className="block text-xs font-semibold text-slate-300 mb-1.5"
                 >
-                  {t.usernameOrEmail}
+                  {t.emailOrUsername}
                 </label>
                 <div className="relative rounded-xl shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -451,6 +305,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
                   >
                     {t.password}
                   </label>
+                  {demoMode && (
                   <button
                     type="button"
                     onClick={() => {
@@ -463,6 +318,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
                   >
                     {t.forgotPassword}
                   </button>
+                )}
                 </div>
 
                 <div className="relative rounded-xl shadow-sm">
@@ -526,7 +382,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>{t.verifyingCredentials}</span>
+                    <span>{t.signingIn}</span>
                   </>
                 ) : (
                   <>
@@ -537,12 +393,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
               </button>
             </form>
 
+          {demoMode && (
+            <>
             {/* Quick Demo Access Accordion */}
             <div className="mt-6 pt-5 border-t border-slate-800/80">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-300">
                   <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{t.demoAccountsTitle}</span>
+                  <span>{t.demoCredentialsTitle}</span>
                   <span className="text-[10px] font-normal text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 rounded">
                     Pass: Imara@2025
                   </span>
@@ -608,34 +466,20 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onViewAbou
               )}
             </div>
 
-            {/* Bottom Security Seals */}
-            <div className="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-              <div className="flex items-center space-x-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                <span>{t.sslSecured}</span>
-              </div>
-              <span>{t.botTier2License}</span>
-            </div>
-          </div>
+              {onViewAboutDemo && (
+                <button type="button" onClick={onViewAboutDemo} className="mt-4 text-sm font-semibold text-emerald-400">
+                  {t.aboutDemo}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="w-full px-4 sm:px-8 py-3 text-center border-t border-slate-900 bg-slate-950 text-slate-500 text-xs">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>© 2025 IMARA FINANCE PLC. {language === 'sw' ? 'Haki zote zimehifadhiwa.' : 'All rights reserved.'}</p>
-          <div className="flex items-center space-x-4 text-[11px]">
-            <span>{language === 'sw' ? 'Mifumo ya Fedha ya BOT' : 'BOT Microfinance Regulations 2019'}</span>
-            <span>•</span>
-            <span>{language === 'sw' ? 'Usalama wa Data ISO 27001' : 'ISO 27001 Certified'}</span>
-          </div>
-        </div>
-      </footer>
-
       {/* Forgot Password Dialog */}
-      {isForgotModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      {demoMode && isForgotModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-md p-4 animate-in fade-in">
+          <div role="dialog" aria-modal="true" aria-label={t.forgotPassword} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setIsForgotModalOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-white p-1"

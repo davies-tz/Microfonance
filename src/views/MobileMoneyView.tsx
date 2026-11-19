@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useMfi } from '../context/MfiContext';
 import { useToast } from '../context/ToastContext';
+import { demoMode } from '../lib/demo';
 import { formatTZS, translations } from '../lib/i18n';
 
 export const MobileMoneyView: React.FC = () => {
@@ -117,7 +118,7 @@ export const MobileMoneyView: React.FC = () => {
         </div>
       </div>
 
-      {/* Interactive Webhook Callback Simulator */}
+      {demoMode && (
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
           <div className="flex items-center space-x-2">
@@ -232,6 +233,8 @@ export const MobileMoneyView: React.FC = () => {
           </div>
         )}
       </div>
+
+      )}
 
       {/* Webhook Audit Log Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">

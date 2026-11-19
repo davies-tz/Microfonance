@@ -43,14 +43,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
   const filteredLoans =
     currentBranchId === 'ALL' ? loans : loans.filter((l) => l.branchId === currentBranchId);
 
+  const branchSummary = currentBranchId === 'ALL' ? summaryMetrics : null;
+  const branchCustomers = customers.filter((customer) => currentBranchId === 'ALL' || customer.branchId === currentBranchId);
   const parMetrics = calculatePortfolioAtRisk(filteredLoans);
 
-  const grossPortfolio = summaryMetrics?.grossPortfolio ?? parMetrics.grossLoanPortfolio;
-  const activeBorrowers = summaryMetrics?.activeBorrowers ?? parMetrics.activeLoans;
-  const totalDisbursed = summaryMetrics?.totalDisbursed ?? filteredLoans.reduce((acc, l) => acc + l.disbursedPrincipal, 0);
+  const grossPortfolio = branchSummary?.grossPortfolio ?? parMetrics.grossLoanPortfolio;
+  const activeBorrowers = branchSummary?.activeBorrowers ?? parMetrics.activeLoans;
+  const totalDisbursed = branchSummary?.totalDisbursed ?? filteredLoans.reduce((acc, l) => acc + l.disbursedPrincipal, 0);
 
   const totalSavings =
-    summaryMetrics?.totalSavings ??
+    branchSummary?.totalSavings ??
     savingsAccounts
       .filter((s) => currentBranchId === 'ALL' || s.branchId === currentBranchId)
       .reduce((acc, s) => acc + s.balance, 0);
@@ -69,87 +71,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
     summaryMetrics?.liquidity?.totalLiquid ?? mpesaFloat + cashVault;
 
   const pendingApps = applications.filter(
-    (a) => a.status === 'PENDING_APPROVAL' || a.status === 'ASSESSED' || a.status === 'SUBMITTED'
+    (a) => (currentBranchId === 'ALL' || a.branchId === currentBranchId) &&
+      (a.status === 'PENDING_APPROVAL' || a.status === 'ASSESSED' || a.status === 'SUBMITTED')
   );
 
-  const recentPayments = payments.slice(0, 5);
+  const recentPayments = payments.filter((payment) => currentBranchId === 'ALL' || payment.branchId === currentBranchId).slice(0, 5);
 
   return (
     <div className="space-y-6">
-      {/* Top Welcome & Summary Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-700/80 rounded-2xl p-4 sm:p-6 shadow-md">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-1">
-              <Building2 className="w-4 h-4" />
-              <span>
-                {currentBranchId === 'ALL'
-                  ? language === 'sw'
-                    ? 'Matawi Yote ya Tanzania (Makao Makuu)'
-                    : 'Institutional Overview (All Tanzanian Branches)'
-                  : branches.find((b) => b.id === currentBranchId)?.name}
-              </span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-              {language === 'sw' ? 'Mfumo wa Uendeshaji wa Mikopo na Fedha' : 'Core Banking & Portfolio MIS'}
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-0.5 max-w-2xl">
-              {language === 'sw'
-                ? 'Hesabu kamili ya Double-Entry (DR/CR), viwango vya PAR kulingana na miongozo ya Benki Kuu ya Tanzania (BOT).'
-                : 'Double-entry accounting, Bank of Tanzania (BOT) prudential PAR classification, and mobile money treasury.'}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setActiveTab('origination')}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-lg shadow-emerald-950/40 transition-all flex items-center space-x-1.5"
-            >
-              <FileText className="w-4 h-4" />
-              <span>{t.applyLoan}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('payments')}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-xs px-3.5 py-2.5 rounded-xl border border-slate-700 transition-colors flex items-center space-x-1.5"
-            >
-              <ArrowLeftRight className="w-4 h-4 text-emerald-400" />
-              <span>{t.recordPayment}</span>
-            </button>
-          </div>
+      <section className="imara-dashboard-intro">
+        <div>
+          <p className="imara-section-label">
+            <Building2 size={15} />
+            {currentBranchId === 'ALL'
+              ? t.allBranches
+              : branches.find((branch) => branch.id === currentBranchId)?.name}
+          </p>
+          <h1>{language === 'sw' ? 'Muhtasari wa shughuli' : 'Operations overview'}</h1>
+          <p>{language === 'sw'
+            ? 'Fuatilia mikopo, akiba na malipo katika matawi yako.'
+            : 'Monitor your loan portfolio, savings and collections.'}</p>
         </div>
-
-        {/* Quick Action Shortcuts Bar */}
-        <div className="mt-5 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          <button
-            onClick={() => setActiveTab('customers')}
-            className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700/60 transition-colors text-left"
-          >
-            <UserPlus className="w-4 h-4 text-sky-400" />
-            <span className="truncate">{t.newCustomer}</span>
+        <div className="flex flex-wrap gap-2">
+          <button className="imara-button" onClick={() => setActiveTab('payments')}>
+            <ArrowLeftRight size={16} /> {t.recordPayment}
           </button>
-          <button
-            onClick={() => setActiveTab('origination')}
-            className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700/60 transition-colors text-left"
-          >
-            <FileText className="w-4 h-4 text-amber-400" />
-            <span className="truncate">{t.applyLoan}</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('payments')}
-            className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700/60 transition-colors text-left"
-          >
-            <ArrowLeftRight className="w-4 h-4 text-emerald-400" />
-            <span className="truncate">{t.recordPayment}</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('savings')}
-            className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700/60 transition-colors text-left"
-          >
-            <Coins className="w-4 h-4 text-purple-400" />
-            <span className="truncate">{t.savingsDeposit}</span>
+          <button className="imara-button is-primary" onClick={() => setActiveTab('origination')}>
+            <FileText size={16} /> {t.applyLoan}
           </button>
         </div>
-      </div>
+      </section>
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -167,7 +118,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
             </h3>
             <div className="flex items-center text-xs text-slate-400 mt-1">
               <span className="text-emerald-400 font-bold mr-1">{activeBorrowers} {t.activeBorrowers}</span>
-              <span>• {customers.length} {language === 'sw' ? 'Wateja' : 'Clients'}</span>
+              <span>• {branchCustomers.length} {language === 'sw' ? 'Wateja' : 'Clients'}</span>
             </div>
           </div>
         </div>

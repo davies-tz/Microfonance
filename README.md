@@ -18,7 +18,8 @@ Double-click **`start.bat`** (or run it from a terminal) and pick an option:
 1. Run locally (Node.js + local PostgreSQL)
 2. Run with Docker (docker compose)
 3. Stop Docker containers
-4. Exit
+4. View Docker logs
+5. Exit
 ```
 
 It handles creating `.env` from `.env.example`, installing dependencies, building/starting the containers, and applying the database schema for you.
@@ -82,6 +83,7 @@ See [.env.example](.env.example) for the full list with descriptions. The import
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
+| `SQL_PORT` | No (default `5432`) | PostgreSQL port |
 | `SQL_HOST`, `SQL_DB_NAME`, `SQL_ADMIN_USER`, `SQL_ADMIN_PASSWORD` | Yes | PostgreSQL connection |
 | `JWT_SECRET` | Yes in production | Signs session tokens. The server refuses to start in production without it. |
 | `MOMO_WEBHOOK_SECRET` | Yes in production | Verifies inbound mobile money provider webhook signatures. |
@@ -90,11 +92,9 @@ See [.env.example](.env.example) for the full list with descriptions. The import
 
 ## Demo Login
 
-The database is auto-seeded with demo branches, staff, customers, and a chart of accounts on first run. Sign in with any seeded account (see the login screen's demo account picker) using the password:
+On a disposable local database, set `IMARA_DEMO_MODE=true` and `VITE_IMARA_DEMO_MODE=true` in `.env` before starting or building. For Compose, rebuild the image after changing the demo setting. The first request creates demo data in an empty database. Sign in as `amina.manager` or choose another demo account from the sign-in screen.
 
-```
-Imara@2025
-```
+For a new production database, leave demo mode disabled. After preparing the schema, set `IMARA_ADMIN_USERNAME`, `IMARA_ADMIN_EMAIL` and `IMARA_ADMIN_PASSWORD` in the environment of a trusted provisioning shell. Run `npm run db:bootstrap-admin` once, then remove those environment variables. Load the institution's branches, approved chart of accounts, and loan products before posting transactions. If the database previously ran with demo accounts, rotate their credentials and the session signing secret before accepting customer data.
 
 ## Available Scripts
 

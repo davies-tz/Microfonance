@@ -1,1 +1,208 @@
 @import "tailwindcss";
+
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #18263e;
+  background: #f2f5fa;
+  font-synthesis: none;
+}
+
+button, select { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 2px solid #2480db; outline-offset: 3px; }
+
+.imara-workspace { height: 100dvh; background: #f2f5fa; }
+.imara-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 66px;
+  padding: 10px clamp(12px, 3vw, 32px);
+  border-bottom: 1px solid #dce4ef;
+  background: #fff;
+}
+.imara-brand, .imara-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -.025em;
+  white-space: nowrap;
+}
+.imara-brand small, .imara-login-brand small {
+  display: block;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+.imara-brand small { color: #52647d; }
+.imara-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 39px;
+  height: 39px;
+  border-radius: 11px;
+  background: #134f8f;
+  color: #fff;
+}
+.imara-topbar-tools { display: flex; align-items: center; gap: 7px; }
+.imara-tool, .imara-button, .imara-login-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d5dfed;
+  border-radius: 8px;
+  background: #fff;
+  color: #213c5d;
+  font-size: 12px;
+  font-weight: 650;
+}
+.imara-tool:hover, .imara-button:hover, .imara-login-tools button:hover { background: #eaf2fb; }
+.imara-branch select { max-width: 165px; }
+.imara-connection {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  color: #9a3412;
+  font-size: 12px;
+}
+.imara-connection.is-online { color: #087660; }
+.imara-sidebar { width: 232px; background: #10223d; color: #d9e4f3; }
+.imara-sidebar button[aria-current=page] { background: #234b77; box-shadow: none; }
+.imara-sidebar button { border-radius: 8px; font-size: 13px; }
+.imara-nav-heading {
+  margin: 15px 0 5px;
+  padding: 0 12px;
+  color: #9db2cf;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.imara-user-card { padding: 15px; border-top: 1px solid #30465f; }
+.imara-content { scrollbar-gutter: stable; }
+.imara-dashboard-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 10px 0 9px;
+}
+.imara-section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #1c629d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.imara-dashboard-intro h1 {
+  margin: 5px 0 3px;
+  font-size: clamp(27px, 3vw, 39px);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -.045em;
+}
+.imara-dashboard-intro p:last-child { color: #52647d; font-size: 14px; }
+.imara-button { min-height: 40px; padding-inline: 13px; }
+.imara-button.is-primary { color: #fff; background: #155b98; border-color: #155b98; }
+.imara-button.is-primary:hover { background: #10477a; }
+
+.imara-login {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+.imara-login-story {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 100%;
+  padding: clamp(24px, 5vw, 76px);
+  color: #fff;
+  background: #102947;
+}
+.imara-login-photo, .imara-login-story::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+}
+.imara-login-photo { object-fit: cover; object-position: center; }
+.imara-login-story::after {
+  content: "";
+  background: linear-gradient(180deg, #0d2748de, #0d274830 44%, #0b213ce8 77%, #0b213c);
+}
+.imara-login-brand .imara-mark { background: #f2f7ff; color: #174f87; }
+.imara-login-brand small { color: #e3ecf8; }
+.imara-login-message { max-width: 590px; padding-top: 90px; }
+.imara-login-message h2 {
+  font-size: clamp(30px, 5vw, 66px);
+  line-height: 1.05;
+  letter-spacing: -.05em;
+  font-weight: 750;
+}
+.imara-login-message p { max-width: 380px; color: #e3ecf8; font-size: 15px; line-height: 1.7; margin-top: 15px; }
+.imara-login-main { display: grid; grid-template-rows: auto 1fr; align-items: center; padding: clamp(18px, 4vw, 50px); }
+.imara-login-tools { justify-self: end; }
+.imara-login-form { width: min(100%, 430px); justify-self: center; padding: 34px 0; }
+.imara-login-form form input:not([type=checkbox]) { min-height: 46px; }
+.imara-login-form form button[type=submit] { min-height: 45px; background: #155b98; }
+
+.imara-light, .imara-login {
+  color: #18263e;
+  --color-slate-950: #eef3f9;
+  --color-slate-900: #fff;
+  --color-slate-800: #dce5ef;
+  --color-slate-700: #cbd8e8;
+  --color-slate-600: #72839a;
+  --color-slate-500: #54657a;
+  --color-slate-400: #425775;
+  --color-slate-300: #334966;
+  --color-slate-200: #263d5b;
+  --color-slate-100: #172e4c;
+  --color-emerald-300: #087660;
+  --color-emerald-400: #086b57;
+  --color-sky-300: #1a5e99;
+  --color-sky-400: #1a5e99;
+  --color-amber-300: #8a4b03;
+  --color-amber-400: #8a4b03;
+  --color-rose-300: #a32945;
+  --color-rose-400: #a32945;
+  --color-purple-400: #6849a0;
+  --color-emerald-950: #ddf3eb;
+  --color-rose-950: #fee9ee;
+  --color-rose-200: #8a2340;
+}
+.imara-light .text-white, .imara-login :is(main,[role=dialog]) .text-white { color: #172e4c; }
+.imara-light :is(button,a,span,div).text-white:is(.bg-emerald-600,.bg-emerald-700,.bg-blue-600,.bg-sky-600,.bg-rose-600,.bg-rose-500,.bg-indigo-600,.bg-purple-600,.bg-teal-600,.bg-red-600),
+.imara-login main button.text-white:is(.bg-emerald-600,.bg-emerald-700),
+.imara-login form button[type=submit].text-white { color: #fff; }
+.imara-light button.hover\:text-white:hover, .imara-login button.hover\:text-white:hover { color: #102d52; }
+.imara-light table { font-variant-numeric: tabular-nums; }
+.imara-light th { white-space: nowrap; }
+.imara-light input::placeholder, .imara-login input::placeholder { color: #5d718a; }
+
+@media (max-width: 767px) {
+  .imara-sidebar { display: none; }
+  .imara-login { grid-template-columns: 1fr; }
+  .imara-login-story { padding: 20px; }
+  .imara-login-message { padding-top: 32px; padding-bottom: 12px; }
+  .imara-login-message h2 { max-width: 440px; }
+  .imara-login-main { padding: 16px 20px 30px; }
+  .imara-login-form { padding: 15px 0; }
+  .imara-topbar { flex-wrap: wrap; }
+  .imara-topbar-tools { flex-wrap: wrap; }
+  .imara-branch select { max-width: 108px; }
+}

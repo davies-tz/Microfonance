@@ -21,23 +21,8 @@ import {
   SavingsTransaction,
   User,
 } from '../types';
-import {
-  INITIAL_APPLICATIONS,
-  INITIAL_AUDIT_LOGS,
-  INITIAL_BRANCHES,
-  INITIAL_CHART_OF_ACCOUNTS,
-  INITIAL_CUSTOMERS,
-  INITIAL_GROUPS,
-  INITIAL_JOURNALS,
-  INITIAL_LOANS,
-  INITIAL_PAYMENTS,
-  INITIAL_PRODUCTS,
-  INITIAL_SAVINGS,
-  INITIAL_USERS,
-} from '../services/mockDb';
+import { INITIAL_USERS } from '../services/mockDb';
 import { Language } from '../lib/i18n';
-import { allocatePaymentToLoan } from '../engines/paymentEngine';
-import { createDisbursementJournal, createRepaymentJournal } from '../engines/accountingEngine';
 import { generateRepaymentSchedule } from '../engines/scheduleEngine';
 import { roundCurrency } from '../engines/interestEngine';
 
@@ -62,9 +47,33 @@ export interface SummaryMetrics {
   recentRepayments: any[];
 }
 
+function toPayment(row: any, loan: Pick<Loan, 'loanAccountNumber' | 'branchId' | 'customerName'> | undefined): Payment {
+  return {
+    id: row.id,
+    receiptNumber: row.receiptNumber,
+    loanId: row.loanId,
+    loanAccountNumber: loan?.loanAccountNumber ?? row.loanId,
+    branchId: loan?.branchId ?? '',
+    customerName: loan?.customerName ?? '',
+    amount: row.amount,
+    paymentMethod: ['CASH', 'BANK_TRANSFER', 'SAVINGS_OFFSET'].includes(row.paymentMethod)
+      ? row.paymentMethod : 'MOBILE_MONEY',
+    channelReference: row.referenceNumber,
+    idempotencyKey: row.referenceNumber ?? row.id,
+    paymentDate: row.paymentDate,
+    receivedBy: row.receivedBy,
+    isReversed: row.isReversed,
+    reversalReason: row.reversalReason ?? undefined,
+    allocations: [],
+    principalAllocated: row.principalAllocated,
+    interestAllocated: row.interestAllocated,
+    feesAllocated: row.feesAllocated,
+    penaltiesAllocated: row.penaltiesAllocated,
+  };
+}
+
 interface MfiContextType {
   currentUser: User | null;
-  setCurrentUser: (user: User | null) => void;
   isAuthenticated: boolean;
   authToken: string | null;
   isAuthLoading: boolean;
@@ -105,21 +114,18 @@ interface MfiContextType {
   approveLoanApplication: (appId: string, level: 'BRANCH_MANAGER' | 'REGIONAL_MANAGER' | 'HEAD_OFFICE', decision: 'APPROVED' | 'REJECTED', comments: string) => Promise<void>;
   disburseLoan: (appId: string, paymentMethod: any) => Promise<Loan>;
   processRepayment: (loanId: string, amount: number, method: any, channelRef: string) => Promise<Payment>;
-  reverseExistingPayment: (paymentId: string, reason: string) => Promise<void>;
   processSavingsDeposit: (accountId: string, amount: number, method: any, reference: string) => Promise<void>;
   processSavingsWithdrawal: (accountId: string, amount: number, method: any, reference: string) => Promise<void>;
   postManualJournalEntry: (narration: string, lines: Array<{ accountId: string; entryType: 'DEBIT' | 'CREDIT'; amount: number }>) => Promise<JournalEntry>;
   simulateMobileMoneyWebhook: (provider: 'MPESA' | 'AIRTEL_MONEY' | 'TIGO_PESA', loanNumber: string, amount: number, phone: string) => Promise<{ success: boolean; message: string; receipt?: string }>;
-  syncOfflineQueue: () => Promise<void>;
+  syncOfflineQueue: () => Promise<number>;
   addOfflineRecord: (record: Omit<OfflineSyncRecord, 'id' | 'syncStatus'>) => void;
-  resetToSeedData: () => Promise<void>;
 }
 
 const MfiContext = createContext<MfiContextType | undefined>(undefined);
 
 export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
-  const [users] = useState<User[]>(INITIAL_USERS);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     return localStorage.getItem('imara_auth_token');
   });
@@ -134,13 +140,14 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return null;
   });
+  const users = currentUser ? [currentUser] : [];
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   // Safe operational fallback
   const activeUser: User = currentUser || INITIAL_USERS[0];
 
   const [currentBranchId, setCurrentBranchId] = useState<string>('ALL');
-  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [isOnline, setIsOnline] = useState<boolean>(() => navigator.onLine);
   const [offlineQueue, setOfflineQueue] = useState<OfflineSyncRecord[]>([]);
   const [summaryMetrics, setSummaryMetrics] = useState<SummaryMetrics | null>(null);
 
@@ -217,21 +224,29 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async () => {
     try {
       if (currentUser) {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: currentUser.id,
-            userName: `${currentUser.firstName} ${currentUser.lastName}`,
-            role: currentUser.role,
-          }),
-        });
+        await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() });
       }
     } catch (err) {
       console.warn('Logout notification error:', err);
     } finally {
       setAuthToken(null);
       setCurrentUser(null);
+      setBranches([]);
+      setCustomers([]);
+      setGroups([]);
+      setLoanProducts([]);
+      setApplications([]);
+      setLoans([]);
+      setPayments([]);
+      setSavingsAccounts([]);
+      setSavingsTransactions([]);
+      setChartOfAccounts([]);
+      setJournals([]);
+      setAuditLogs([]);
+      setProviderTransactions([]);
+      setOfflineQueue([]);
+      setSummaryMetrics(null);
+      setCurrentBranchId('ALL');
       localStorage.removeItem('imara_auth_token');
       localStorage.removeItem('imara_user');
     }
@@ -245,56 +260,41 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
   };
 
-  // Domain states with fallback
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('mfi_customers');
-    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
-  });
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
-  const [groups, setGroups] = useState<LendingGroup[]>(() => {
-    const saved = localStorage.getItem('mfi_groups');
-    return saved ? JSON.parse(saved) : INITIAL_GROUPS;
-  });
+  const postToServer = async (url: string, payload: unknown) => {
+    if (!isOnline) throw new Error('Reconnect to save this change.');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data) {
+      throw new Error(data?.error || 'The server could not save this change.');
+    }
+    return data;
+  };
 
-  const [loanProducts, setLoanProducts] = useState<LoanProduct[]>(INITIAL_PRODUCTS);
-
-  const [applications, setApplications] = useState<LoanApplication[]>(() => {
-    const saved = localStorage.getItem('mfi_applications');
-    return saved ? JSON.parse(saved) : INITIAL_APPLICATIONS;
-  });
-
-  const [loans, setLoans] = useState<Loan[]>(() => {
-    const saved = localStorage.getItem('mfi_loans');
-    return saved ? JSON.parse(saved) : INITIAL_LOANS;
-  });
-
-  const [payments, setPayments] = useState<Payment[]>(() => {
-    const saved = localStorage.getItem('mfi_payments');
-    return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
-  });
-
-  const [savingsAccounts, setSavingsAccounts] = useState<SavingsAccount[]>(() => {
-    const saved = localStorage.getItem('mfi_savings');
-    return saved ? JSON.parse(saved) : INITIAL_SAVINGS;
-  });
-
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [groups, setGroups] = useState<LendingGroup[]>([]);
+  const [loanProducts, setLoanProducts] = useState<LoanProduct[]>([]);
+  const [applications, setApplications] = useState<LoanApplication[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [savingsAccounts, setSavingsAccounts] = useState<SavingsAccount[]>([]);
   const [savingsTransactions, setSavingsTransactions] = useState<SavingsTransaction[]>([]);
-
-  const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>(() => {
-    const saved = localStorage.getItem('mfi_coa');
-    return saved ? JSON.parse(saved) : INITIAL_CHART_OF_ACCOUNTS;
-  });
-
-  const [journals, setJournals] = useState<JournalEntry[]>(() => {
-    const saved = localStorage.getItem('mfi_journals');
-    return saved ? JSON.parse(saved) : INITIAL_JOURNALS;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem('mfi_audit');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
+  const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>([]);
+  const [journals, setJournals] = useState<JournalEntry[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [providerTransactions, setProviderTransactions] = useState<ProviderWebhookTransaction[]>([]);
 
   // Fetch Summary from Cloud SQL
@@ -341,253 +341,241 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fetch('/api/audit-logs', { headers: authHeaders() }),
       ]);
 
+      const mobileMoney = await fetch('/api/mobile-money/transactions', { headers: authHeaders() }).catch(() => null);
+      if (mobileMoney?.ok) {
+        const rows = await mobileMoney.json();
+        setProviderTransactions(rows);
+      }
+      const customerRows = customersRes.ok ? await customersRes.json() : [];
+      const productRows = productsRes.ok ? await productsRes.json() : [];
+      const loanRows = loansRes.ok ? await loansRes.json() : [];
+      const customersById = new Map<string, any>(customerRows.map((customer: any) => [customer.id, customer]));
+      const productsById = new Map<string, any>(productRows.map((product: any) => [product.id, product]));
+      const customerName = (id: string) => {
+        const customer = customersById.get(id);
+        return customer ? `${customer.firstName} ${customer.lastName}` : '';
+      };
+
       if (summaryRes.ok) setSummaryMetrics(await summaryRes.json());
       if (branchesRes.ok) {
         const data = await branchesRes.json();
-        if (data.length > 0) setBranches(data);
+        setBranches(data);
       }
       if (customersRes.ok) {
-        const data = await customersRes.json();
-        if (data.length > 0) {
-          const mappedCustomers: Customer[] = data.map((c: any) => ({
-            id: c.id,
-            customerNumber: c.customerNumber,
-            branchId: c.branchId,
-            firstName: c.firstName,
-            middleName: '',
-            lastName: c.lastName,
-            dateOfBirth: c.dateOfBirth,
-            gender: c.gender,
-            phonePrimary: c.phoneNumber,
-            email: c.email,
-            nationalIdNumber: c.nationalIdNida,
-            status: 'ACTIVE',
-            businessType: c.businessType,
-            monthlyRevenue: c.monthlyIncome,
-            monthlyExpenses: roundCurrency(c.monthlyIncome * 0.4),
-            groupId: undefined,
-            documents: c.documentUrl
-              ? [
-                  {
-                    id: `doc-${c.id}`,
-                    documentType: 'NIDA_ID_CARD',
-                    fileUrl: c.documentUrl,
-                    documentNumber: c.nationalIdNida,
-                    verificationStatus: 'VERIFIED',
-                    uploadedAt: c.createdAt,
-                  },
-                ]
-              : [],
-            createdAt: c.createdAt,
-          }));
-          setCustomers(mappedCustomers);
-        }
+        const data = customerRows;
+        const mappedCustomers: Customer[] = data.map((c: any) => ({
+          id: c.id,
+          customerNumber: c.customerNumber,
+          branchId: c.branchId,
+          firstName: c.firstName,
+          middleName: '',
+          lastName: c.lastName,
+          dateOfBirth: c.dateOfBirth,
+          gender: c.gender,
+          phonePrimary: c.phoneNumber,
+          email: c.email,
+          nationalIdNumber: c.nationalIdNida,
+          status: 'ACTIVE',
+          businessType: c.businessType,
+          monthlyRevenue: c.monthlyIncome,
+          monthlyExpenses: roundCurrency(c.monthlyIncome * 0.4),
+          groupId: undefined,
+          documents: c.documentUrl
+            ? [
+                {
+                  id: `doc-${c.id}`,
+                  documentType: 'NIDA_ID_CARD',
+                  fileUrl: c.documentUrl,
+                  documentNumber: c.nationalIdNida,
+                  verificationStatus: 'VERIFIED',
+                  uploadedAt: c.createdAt,
+                },
+              ]
+            : [],
+          createdAt: c.createdAt,
+        }));
+        setCustomers(mappedCustomers);
       }
       if (groupsRes.ok) {
         const data = await groupsRes.json();
-        if (data.length > 0) {
-          const mappedGroups: LendingGroup[] = data.map((g: any) => ({
-            id: g.id,
-            groupNumber: g.groupNumber,
-            branchId: g.branchId,
-            name: g.name,
-            leaderCustomerId: '',
-            loanOfficerId: g.officerId || 'usr-co-1',
-            meetingFrequency: g.meetingFrequency,
-            meetingDayOfWeek: 2,
-            meetingLocation: g.meetingLocation,
-            status: g.isActive ? 'ACTIVE' : 'DISSOLVED',
-            memberIds: [],
-            createdAt: g.createdAt,
-          }));
-          setGroups(mappedGroups);
-        }
+        const mappedGroups: LendingGroup[] = data.map((g: any) => ({
+          id: g.id,
+          groupNumber: g.groupNumber,
+          branchId: g.branchId,
+          name: g.name,
+          leaderCustomerId: '',
+          loanOfficerId: g.officerId || 'usr-co-1',
+          meetingFrequency: g.meetingFrequency,
+          meetingDayOfWeek: 2,
+          meetingLocation: g.meetingLocation,
+          status: g.isActive ? 'ACTIVE' : 'DISSOLVED',
+          memberIds: [],
+          createdAt: g.createdAt,
+        }));
+        setGroups(mappedGroups);
       }
       if (productsRes.ok) {
-        const data = await productsRes.json();
-        if (data.length > 0) {
-          const mappedProds: LoanProduct[] = data.map((p: any) => ({
-            id: p.id,
-            code: p.code,
-            name: p.nameEn,
-            interestMethod: p.interestMethod,
-            annualNominalRate: p.annualInterestRate,
-            minPrincipal: p.minAmount,
-            maxPrincipal: p.maxAmount,
-            minTermInstallments: p.minTenureMonths,
-            maxTermInstallments: p.maxTenureMonths,
-            repaymentFrequency: p.repaymentFrequency,
-            gracePeriodType: 'NONE',
-            gracePeriodInstallments: p.gracePeriodDays ? Math.ceil(p.gracePeriodDays / 30) : 0,
-            processingFeePercent: p.originationFeeRate * 100,
-            compulsorySavingsPercent: p.compulsorySavingsRate * 100,
-            isActive: p.isActive,
-          }));
-          setLoanProducts(mappedProds);
-        }
+        const data = productRows;
+        const mappedProds: LoanProduct[] = data.map((p: any) => ({
+          id: p.id,
+          code: p.code,
+          name: p.nameEn,
+          interestMethod: p.interestMethod,
+          annualNominalRate: p.annualInterestRate,
+          minPrincipal: p.minAmount,
+          maxPrincipal: p.maxAmount,
+          minTermInstallments: p.minTenureMonths,
+          maxTermInstallments: p.maxTenureMonths,
+          repaymentFrequency: p.repaymentFrequency,
+          gracePeriodType: 'NONE',
+          gracePeriodInstallments: p.gracePeriodDays ? Math.ceil(p.gracePeriodDays / 30) : 0,
+          processingFeePercent: p.originationFeeRate * 100,
+          compulsorySavingsPercent: p.compulsorySavingsRate * 100,
+          isActive: p.isActive,
+        }));
+        setLoanProducts(mappedProds);
       }
       if (appsRes.ok) {
         const data = await appsRes.json();
-        if (data.length > 0) {
-          const mappedApps: LoanApplication[] = data.map((a: any) => ({
-            id: a.id,
-            applicationNumber: a.applicationNumber,
-            branchId: a.branchId || 'br-kariakoo',
-            customerId: a.customerId,
-            customerName: 'Customer',
-            groupId: a.groupId || undefined,
-            productId: a.productId,
-            productName: 'Loan Facility',
-            appliedPrincipal: a.requestedAmount,
-            approvedPrincipal: a.approvedAmount || undefined,
-            termInstallments: a.tenureMonths,
-            purpose: a.purpose,
-            status: a.status === 'PENDING_REVIEW' ? 'SUBMITTED' : a.status,
-            // The maker (submitter) - used to block self-approval in the UI.
-            loanOfficerId: a.submittedBy || 'usr-co-1',
-            approvals: [],
-            createdAt: a.createdAt,
-            updatedAt: a.createdAt,
-          }));
-          setApplications(mappedApps);
-        }
+        const mappedApps: LoanApplication[] = data.map((a: any) => ({
+          id: a.id,
+          applicationNumber: a.applicationNumber,
+          branchId: customersById.get(a.customerId)?.branchId || '',
+          customerId: a.customerId,
+          customerName: customerName(a.customerId),
+          groupId: a.groupId || undefined,
+          productId: a.productId,
+          productName: productsById.get(a.productId)?.nameEn || '',
+          appliedPrincipal: a.requestedAmount,
+          approvedPrincipal: a.approvedAmount || undefined,
+          termInstallments: a.tenureMonths,
+          purpose: a.purpose,
+          status: a.status === 'PENDING_REVIEW' ? 'SUBMITTED' : a.status,
+          // The maker (submitter) - used to block self-approval in the UI.
+          loanOfficerId: a.submittedBy || 'usr-co-1',
+          approvals: [],
+          createdAt: a.createdAt,
+          updatedAt: a.createdAt,
+        }));
+        setApplications(mappedApps);
       }
       if (loansRes.ok) {
-        const data = await loansRes.json();
-        if (data.length > 0) {
-          const mappedLoans: Loan[] = data.map((l: any) => ({
-            id: l.id,
-            loanAccountNumber: l.loanAccountNumber,
-            applicationId: l.applicationId,
-            customerId: l.customerId,
-            customerName: 'Borrower',
-            customerPhone: '+255 700 000 000',
-            branchId: l.branchId,
-            productId: l.productId,
-            productName: 'Loan Facility',
-            groupId: l.groupId,
-            disbursedPrincipal: l.principalAmount,
-            outstandingPrincipal: l.outstandingPrincipal,
-            outstandingInterest: l.accruedInterest || 0,
-            outstandingFees: l.unpaidFees || 0,
-            outstandingPenalties: l.unpaidPenalties || 0,
-            totalOutstanding: l.outstandingPrincipal + (l.accruedInterest || 0) + (l.unpaidFees || 0) + (l.unpaidPenalties || 0),
-            daysInArrears: l.daysInArrears || 0,
-            status: l.status === 'DELINQUENT' ? 'IN_ARREARS' : l.status,
-            disbursedAt: l.disbursementDate,
-            disbursedBy: 'Branch Manager',
-            maturityDate: l.maturityDate,
-            installments: [],
-          }));
-          setLoans(mappedLoans);
-        }
+        const data = loanRows;
+        const mappedLoans: Loan[] = data.map((l: any) => ({
+          id: l.id,
+          loanAccountNumber: l.loanAccountNumber,
+          applicationId: l.applicationId,
+          customerId: l.customerId,
+          customerName: customerName(l.customerId),
+          customerPhone: customersById.get(l.customerId)?.phoneNumber || '',
+          branchId: l.branchId,
+          productId: l.productId,
+          productName: productsById.get(l.productId)?.nameEn || '',
+          groupId: l.groupId,
+          disbursedPrincipal: l.principalAmount,
+          outstandingPrincipal: l.outstandingPrincipal,
+          outstandingInterest: l.accruedInterest || 0,
+          outstandingFees: l.unpaidFees || 0,
+          outstandingPenalties: l.unpaidPenalties || 0,
+          totalOutstanding: l.outstandingPrincipal + (l.accruedInterest || 0) + (l.unpaidFees || 0) + (l.unpaidPenalties || 0),
+          daysInArrears: l.daysInArrears || 0,
+          status: l.status === 'DELINQUENT' ? 'IN_ARREARS' : l.status,
+          disbursedAt: l.disbursementDate,
+          disbursedBy: 'Branch Manager',
+          maturityDate: l.maturityDate,
+          installments: [],
+        }));
+        setLoans(mappedLoans);
+      }
+      if (repaymentsRes.ok) {
+        const rows = await repaymentsRes.json();
+        const loansById = new Map<string, any>(loanRows.map((loan: any) => [loan.id, loan]));
+        setPayments(rows.map((row: any) => {
+          const loan = loansById.get(row.loanId);
+          return toPayment(row, loan && { ...loan, customerName: customerName(loan.customerId) });
+        }));
       }
       if (savingsRes.ok) {
         const data = await savingsRes.json();
-        if (data.length > 0) {
-          const mappedSavings: SavingsAccount[] = data.map((s: any) => ({
-            id: s.id,
-            accountNumber: s.accountNumber,
-            customerId: s.customerId,
-            customerName: 'Client Member',
-            branchId: 'br-kariakoo',
-            productType: s.productType,
-            balance: s.balance,
-            lockedAmount: s.lockedAmount,
-            status: s.status,
-            openedAt: s.createdAt,
-          }));
-          setSavingsAccounts(mappedSavings);
-        }
+        const mappedSavings: SavingsAccount[] = data.map((s: any) => ({
+          id: s.id,
+          accountNumber: s.accountNumber,
+          customerId: s.customerId,
+          customerName: customerName(s.customerId),
+          branchId: customersById.get(s.customerId)?.branchId || '',
+          productType: s.productType,
+          balance: s.balance,
+          lockedAmount: s.lockedAmount,
+          status: s.status,
+          openedAt: s.createdAt,
+        }));
+        setSavingsAccounts(mappedSavings);
       }
       if (coaRes.ok) {
         const data = await coaRes.json();
-        if (data.length > 0) {
-          const mappedCoa: ChartOfAccount[] = data.map((c: any) => ({
-            id: c.id,
-            code: c.code,
-            name: c.name,
-            type: c.type,
-            normalBalance: c.normalBalance,
-            balance: c.balance,
-            description: c.description || '',
-          }));
-          setChartOfAccounts(mappedCoa);
-        }
+        const mappedCoa: ChartOfAccount[] = data.map((c: any) => ({
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          type: c.type,
+          normalBalance: c.normalBalance,
+          balance: c.balance,
+          description: c.description || '',
+        }));
+        setChartOfAccounts(mappedCoa);
       }
       if (journalsRes.ok) {
         const data = await journalsRes.json();
-        if (data.length > 0) {
-          const mappedJournals: JournalEntry[] = data.map((j: any) => ({
-            id: j.id,
-            entryNumber: j.entryNumber,
-            branchId: 'br-kariakoo',
-            transactionDate: j.transactionDate,
-            narration: j.narration,
-            referenceType: j.referenceType,
-            referenceId: j.referenceId || '',
-            postedBy: j.postedBy,
-            lines: (j.lines || []).map((l: any) => ({
-              id: l.id,
-              accountId: l.accountCode,
-              accountCode: l.accountCode,
-              accountName: l.accountName,
-              entryType: l.entryType,
-              amount: l.amount,
-            })),
-            totalDebit: j.totalDebit,
-            totalCredit: j.totalCredit,
-            createdAt: j.createdAt,
-          }));
-          setJournals(mappedJournals);
-        }
+        const mappedJournals: JournalEntry[] = data.map((j: any) => ({
+          id: j.id,
+          entryNumber: j.entryNumber,
+          branchId: 'br-kariakoo',
+          transactionDate: j.transactionDate,
+          narration: j.narration,
+          referenceType: j.referenceType,
+          referenceId: j.referenceId || '',
+          postedBy: j.postedBy,
+          lines: (j.lines || []).map((l: any) => ({
+            id: l.id,
+            accountId: l.accountCode,
+            accountCode: l.accountCode,
+            accountName: l.accountName,
+            entryType: l.entryType,
+            amount: l.amount,
+          })),
+          totalDebit: j.totalDebit,
+          totalCredit: j.totalCredit,
+          createdAt: j.createdAt,
+        }));
+        setJournals(mappedJournals);
       }
       if (auditRes.ok) {
         const data = await auditRes.json();
-        if (data.length > 0) {
-          const mappedLogs: AuditLog[] = data.map((a: any) => ({
-            id: a.id,
-            userId: a.userId,
-            userName: a.userName,
-            userRole: a.userRole,
-            action: a.action,
-            entityName: a.entityName,
-            entityId: a.entityId,
-            beforeState: null,
-            afterState: null,
-            ipAddress: a.ipAddress,
-            timestamp: a.timestamp,
-          }));
-          setAuditLogs(mappedLogs);
-        }
+        const mappedLogs: AuditLog[] = data.map((a: any) => ({
+          id: a.id,
+          userId: a.userId,
+          userName: a.userName,
+          userRole: a.userRole,
+          action: a.action,
+          entityName: a.entityName,
+          entityId: a.entityId,
+          beforeState: null,
+          afterState: null,
+          ipAddress: a.ipAddress,
+          timestamp: a.timestamp,
+        }));
+        setAuditLogs(mappedLogs);
       }
     } catch (err) {
-      console.warn('Could not sync from Cloud SQL API (falling back to offline store):', err);
+      console.warn('Could not load account data:', err);
     }
   }, []);
 
   useEffect(() => {
-    loadCloudSqlData();
-  }, [loadCloudSqlData]);
+    if (!authToken) return;
+    void loadCloudSqlData();
+  }, [authToken, loadCloudSqlData]);
 
-  // Sync to local storage for offline resilience
-  useEffect(() => {
-    try {
-      localStorage.setItem('mfi_customers', JSON.stringify(customers));
-      localStorage.setItem('mfi_groups', JSON.stringify(groups));
-      localStorage.setItem('mfi_applications', JSON.stringify(applications));
-      localStorage.setItem('mfi_loans', JSON.stringify(loans));
-      localStorage.setItem('mfi_payments', JSON.stringify(payments));
-      localStorage.setItem('mfi_savings', JSON.stringify(savingsAccounts));
-      localStorage.setItem('mfi_coa', JSON.stringify(chartOfAccounts));
-      localStorage.setItem('mfi_journals', JSON.stringify(journals));
-      localStorage.setItem('mfi_audit', JSON.stringify(auditLogs));
-    } catch {
-      // ignore
-    }
-  }, [customers, groups, applications, loans, payments, savingsAccounts, chartOfAccounts, journals, auditLogs]);
-
-  // Actions
   const createCustomer = async (customerData: Partial<Customer>): Promise<Customer> => {
     const id = `cust-${Date.now()}`;
     const customerNumber = `CUST-${new Date().toISOString().slice(0, 7).replace('-', '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -613,48 +601,25 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
-    // Update local state immediately
-    setCustomers((prev) => [newCust, ...prev]);
-
-    // Save to Cloud SQL PostgreSQL if online
-    if (isOnline) {
-      try {
-        await fetch('/api/customers', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            firstName: newCust.firstName,
-            lastName: newCust.lastName,
-            nationalIdNida: newCust.nationalIdNumber || `NIDA-${Date.now()}`,
-            phoneNumber: newCust.phonePrimary,
-            email: newCust.email,
-            dateOfBirth: newCust.dateOfBirth,
-            gender: newCust.gender,
-            residentialAddress: 'Tanzania Residential Area',
-            businessType: newCust.businessType,
-            monthlyIncome: newCust.monthlyRevenue,
-            branchId: newCust.branchId,
-            userId: activeUser.id,
-            userName: `${activeUser.firstName} ${activeUser.lastName}`,
-          }),
-        });
-        refreshSummary();
-      } catch {
-        addOfflineRecord({
-          operationType: 'CUSTOMER_REGISTRATION',
-          payload: newCust,
-          clientTimestamp: new Date().toISOString(),
-        });
-      }
-    } else {
-      addOfflineRecord({
-        operationType: 'CUSTOMER_REGISTRATION',
-        payload: newCust,
-        clientTimestamp: new Date().toISOString(),
-      });
-    }
-
-    return newCust;
+    const saved = await postToServer('/api/customers', {
+      firstName: newCust.firstName,
+      lastName: newCust.lastName,
+      nationalIdNida: newCust.nationalIdNumber || `NIDA-${Date.now()}`,
+      phoneNumber: newCust.phonePrimary,
+      email: newCust.email,
+      dateOfBirth: newCust.dateOfBirth,
+      gender: newCust.gender,
+      residentialAddress: 'Tanzania Residential Area',
+      businessType: newCust.businessType,
+      monthlyIncome: newCust.monthlyRevenue,
+      branchId: newCust.branchId,
+      userId: activeUser.id,
+      userName: `${activeUser.firstName} ${activeUser.lastName}`,
+    });
+    const customer = { ...newCust, id: saved.id, customerNumber: saved.customerNumber };
+    setCustomers((previous) => [customer, ...previous]);
+    void loadCloudSqlData();
+    return customer;
   };
 
   const verifyKycDocument = (customerId: string, docId: string, status: 'VERIFIED' | 'REJECTED', reason?: string) => {
@@ -696,27 +661,18 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
-    setGroups((prev) => [newGroup, ...prev]);
-
-    if (isOnline) {
-      try {
-        await fetch('/api/groups', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            name: newGroup.name,
-            meetingDay: 'Tuesday',
-            meetingFrequency: newGroup.meetingFrequency,
-            meetingLocation: newGroup.meetingLocation,
-            branchId: newGroup.branchId,
-            officerId: activeUser.id,
-          }),
-        });
-      } catch {
-        // queued
-      }
-    }
-    return newGroup;
+    const saved = await postToServer('/api/groups', {
+      name: newGroup.name,
+      meetingDay: 'Tuesday',
+      meetingFrequency: newGroup.meetingFrequency,
+      meetingLocation: newGroup.meetingLocation,
+      branchId: newGroup.branchId,
+      officerId: activeUser.id,
+    });
+    const group = { ...newGroup, id: saved.id, groupNumber: saved.groupNumber };
+    setGroups((previous) => [group, ...previous]);
+    void loadCloudSqlData();
+    return group;
   };
 
   const createLoanApplication = async (appData: Partial<LoanApplication>): Promise<LoanApplication> => {
@@ -742,30 +698,20 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: new Date().toISOString(),
     };
 
-    setApplications((prev) => [newApp, ...prev]);
-
-    if (isOnline) {
-      try {
-        await fetch('/api/applications', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            customerId: newApp.customerId,
-            productId: newApp.productId,
-            groupId: newApp.groupId,
-            requestedAmount: newApp.appliedPrincipal,
-            tenureMonths: newApp.termInstallments,
-            purpose: newApp.purpose,
-            userId: activeUser.id,
-            userName: `${activeUser.firstName} ${activeUser.lastName}`,
-          }),
-        });
-      } catch {
-        // offline
-      }
-    }
-
-    return newApp;
+    const saved = await postToServer('/api/applications', {
+      customerId: newApp.customerId,
+      productId: newApp.productId,
+      groupId: newApp.groupId,
+      requestedAmount: newApp.appliedPrincipal,
+      tenureMonths: newApp.termInstallments,
+      purpose: newApp.purpose,
+      userId: activeUser.id,
+      userName: `${activeUser.firstName} ${activeUser.lastName}`,
+    });
+    const application = { ...newApp, id: saved.id, applicationNumber: saved.applicationNumber };
+    setApplications((previous) => [application, ...previous]);
+    void loadCloudSqlData();
+    return application;
   };
 
   const assessLoanApplication = async (appId: string, assessmentData: any) => {
@@ -802,7 +748,8 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // call, so we must wait for its response before updating local state.
     // Applying the change optimistically first would show "Approved" in the
     // UI even when the backend refused it.
-    if (isOnline) {
+    if (!isOnline) throw new Error('Reconnect to review this application.');
+    {
       const res = await fetch(`/api/applications/${appId}/review`, {
         method: 'PATCH',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -891,253 +838,62 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       installments,
     };
 
-    setApplications((prev) =>
-      prev.map((a) => (a.id === appId ? { ...a, status: 'DISBURSED' as const } : a))
-    );
-
-    const journal = createDisbursementJournal(
-      app.branchId,
-      loanAccountNumber,
-      principal,
-      processingFee,
-      paymentMethod,
-      `${activeUser.firstName} ${activeUser.lastName}`,
-      chartOfAccounts
-    );
-
-    setLoans((prev) => [newLoan, ...prev]);
-    setJournals((prev) => [journal, ...prev]);
-
-    // Save to Cloud SQL PostgreSQL
-    if (isOnline) {
-      try {
-        await fetch('/api/loans/disburse', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            applicationId: app.id,
-            disbursementDate: new Date().toISOString().split('T')[0],
-            channel: paymentMethod === 'CASH' ? 'CASH' : 'MPESA',
-            officerId: activeUser.id,
-          }),
-        });
-        refreshSummary();
-      } catch {
-        // offline
-      }
-    }
-
-    return newLoan;
+    const saved = await postToServer('/api/loans/disburse', {
+      applicationId: app.id,
+      disbursementDate: new Date().toISOString().split('T')[0],
+      channel: paymentMethod === 'CASH' ? 'CASH' : 'MPESA',
+      officerId: activeUser.id,
+    });
+    const loan = { ...newLoan, id: saved.loan.id, loanAccountNumber: saved.loan.loanAccountNumber };
+    setLoans((previous) => [loan, ...previous]);
+    setApplications((previous) => previous.map((item) => item.id === appId ? { ...item, status: 'DISBURSED' } : item));
+    void loadCloudSqlData();
+    return loan;
   };
 
   const processRepayment = async (loanId: string, amount: number, method: any, channelRef: string): Promise<Payment> => {
     const loan = loans.find((l) => l.id === loanId);
     if (!loan) throw new Error('Loan not found');
 
-    const result = allocatePaymentToLoan(
-      loan,
+      const saved = await postToServer('/api/repayments', {
+      loanId: loan.id,
       amount,
-      method,
-      channelRef,
-      `${activeUser.firstName} ${activeUser.lastName}`,
-      `idemp-${Date.now()}`
-    );
-
-    setLoans((prev) => prev.map((l) => (l.id === loanId ? result.updatedLoan : l)));
-    setPayments((prev) => [result.payment, ...prev]);
-
-    const journal = createRepaymentJournal(
-      loan.branchId,
-      loan.loanAccountNumber,
-      result.payment.receiptNumber,
-      amount,
-      method,
-      result.payment.allocations,
-      `${activeUser.firstName} ${activeUser.lastName}`,
-      chartOfAccounts
-    );
-    setJournals((prev) => [journal, ...prev]);
-
-    // Save to Cloud SQL PostgreSQL
-    if (isOnline) {
-      try {
-        await fetch('/api/repayments', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            loanId: loan.id,
-            amount,
-            paymentMethod: method === 'CASH' ? 'CASH' : (method === 'AIRTEL_MONEY' ? 'AIRTEL_MONEY' : (method === 'TIGO_PESA' ? 'TIGO_PESA' : 'MPESA')),
-            referenceNumber: channelRef,
-            receivedBy: `${activeUser.firstName} ${activeUser.lastName}`,
-          }),
-        });
-        refreshSummary();
-      } catch {
-        addOfflineRecord({
-          operationType: 'COLLECTION_PAYMENT',
-          payload: { loanId, amount, paymentMethod: method, channelRef },
-          clientTimestamp: new Date().toISOString(),
-        });
-      }
-    } else {
-      addOfflineRecord({
-        operationType: 'COLLECTION_PAYMENT',
-        payload: { loanId, amount, paymentMethod: method, channelRef },
-        clientTimestamp: new Date().toISOString(),
-      });
-    }
-
-    return result.payment;
+      paymentMethod: method === 'MOBILE_MONEY' ? 'MPESA' : method,
+      referenceNumber: channelRef,
+      receivedBy: `${activeUser.firstName} ${activeUser.lastName}`,
+    });
+    const payment = toPayment(saved, loan);
+    setPayments((previous) => [payment, ...previous.filter((item) => item.id !== payment.id)]);
+    void loadCloudSqlData();
+    return payment;
   };
 
-  const reverseExistingPayment = async (paymentId: string, reason: string) => {
-    const payment = payments.find((p) => p.id === paymentId);
-    if (!payment) throw new Error('Payment not found');
-    const loan = loans.find((l) => l.id === payment.loanId);
-    if (!loan) throw new Error('Associated loan not found');
-
-    setPayments((prev) =>
-      prev.map((p) =>
-        p.id === paymentId
-          ? { ...p, isReversed: true, reversedAt: new Date().toISOString(), reversedBy: `${activeUser.firstName} ${activeUser.lastName}`, reversalReason: reason }
-          : p
-      )
-    );
-
-    // Reversal journal
-    const reversalJournal: JournalEntry = {
-      id: `jv-rev-${Date.now()}`,
-      entryNumber: `JV-REV-${Math.floor(100000 + Math.random() * 900000)}`,
-      branchId: loan.branchId,
-      transactionDate: new Date().toISOString().split('T')[0],
-      narration: `REVERSAL of Receipt ${payment.receiptNumber} - Reason: ${reason}`,
-      referenceType: 'REVERSAL',
-      referenceId: payment.receiptNumber,
-      postedBy: `${activeUser.firstName} ${activeUser.lastName}`,
-      lines: [
-        {
-          id: `jl-rev-1`,
-          accountId: 'coa-1200',
-          accountCode: '1200',
-          accountName: 'Gross Loan Portfolio',
-          entryType: 'DEBIT',
-          amount: payment.principalAllocated,
-        },
-        {
-          id: `jl-rev-2`,
-          accountId: 'coa-1020',
-          accountCode: '1020',
-          accountName: 'Vodacom M-Pesa Float',
-          entryType: 'CREDIT',
-          amount: payment.amount,
-        },
-      ],
-      totalDebit: payment.amount,
-      totalCredit: payment.amount,
-      createdAt: new Date().toISOString(),
-    };
-    setJournals((prev) => [reversalJournal, ...prev]);
+  const postSavingsTransaction = async (
+    accountId: string, amount: number, method: SavingsTransaction['paymentMethod'],
+    transactionType: 'DEPOSIT' | 'WITHDRAWAL',
+  ) => {
+    const account = savingsAccounts.find((item) => item.id === accountId);
+    if (!account) throw new Error('Savings account not found');
+    const saved = await postToServer('/api/savings/transaction', {
+      accountId, amount, channel: method, transactionType,
+    });
+    setSavingsAccounts((previous) => previous.map((item) => item.id === accountId
+      ? { ...item, balance: saved.balanceAfter } : item));
+    setSavingsTransactions((previous) => [{
+      id: saved.id, savingsAccountId: accountId, accountNumber: account.accountNumber,
+      customerName: account.customerName, transactionType, amount: saved.amount,
+      balanceBefore: roundCurrency(saved.balanceAfter + (transactionType === 'DEPOSIT' ? -saved.amount : saved.amount)),
+      balanceAfter: saved.balanceAfter, paymentMethod: method, reference: saved.reference,
+      postedBy: `${activeUser.firstName} ${activeUser.lastName}`, createdAt: new Date().toISOString(),
+    }, ...previous]);
+    void refreshSummary();
   };
 
-  const processSavingsDeposit = async (accountId: string, amount: number, method: any, reference: string) => {
-    const acc = savingsAccounts.find((a) => a.id === accountId);
-    if (!acc) throw new Error('Savings account not found');
+  const processSavingsDeposit = (accountId: string, amount: number, method: SavingsTransaction['paymentMethod']) =>
+    postSavingsTransaction(accountId, amount, method, 'DEPOSIT');
 
-    const balBefore = acc.balance;
-    const balAfter = roundCurrency(balBefore + amount);
-
-    const tx: SavingsTransaction = {
-      id: `stx-${Date.now()}`,
-      savingsAccountId: acc.id,
-      accountNumber: acc.accountNumber,
-      customerName: acc.customerName,
-      transactionType: 'DEPOSIT',
-      amount,
-      balanceBefore: balBefore,
-      balanceAfter: balAfter,
-      paymentMethod: method,
-      reference,
-      postedBy: `${activeUser.firstName} ${activeUser.lastName}`,
-      createdAt: new Date().toISOString(),
-    };
-
-    setSavingsAccounts((prev) =>
-      prev.map((a) => (a.id === accountId ? { ...a, balance: balAfter } : a))
-    );
-    setSavingsTransactions((prev) => [tx, ...prev]);
-
-    if (isOnline) {
-      try {
-        await fetch('/api/savings/transaction', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            accountId: acc.id,
-            transactionType: 'DEPOSIT',
-            amount,
-            channel: method,
-            narration: `Deposit to ${acc.accountNumber}`,
-          }),
-        });
-        refreshSummary();
-      } catch {
-        // offline
-      }
-    }
-  };
-
-  const processSavingsWithdrawal = async (accountId: string, amount: number, method: any, reference: string) => {
-    const acc = savingsAccounts.find((a) => a.id === accountId);
-    if (!acc) throw new Error('Savings account not found');
-
-    const available = acc.balance - acc.lockedAmount;
-    if (amount > available) {
-      throw new Error(`Insufficient free balance. Locked collateral is ${acc.lockedAmount.toLocaleString()} TZS.`);
-    }
-
-    const balBefore = acc.balance;
-    const balAfter = roundCurrency(balBefore - amount);
-
-    const tx: SavingsTransaction = {
-      id: `stx-${Date.now()}`,
-      savingsAccountId: acc.id,
-      accountNumber: acc.accountNumber,
-      customerName: acc.customerName,
-      transactionType: 'WITHDRAWAL',
-      amount,
-      balanceBefore: balBefore,
-      balanceAfter: balAfter,
-      paymentMethod: method,
-      reference,
-      postedBy: `${activeUser.firstName} ${activeUser.lastName}`,
-      createdAt: new Date().toISOString(),
-    };
-
-    setSavingsAccounts((prev) =>
-      prev.map((a) => (a.id === accountId ? { ...a, balance: balAfter } : a))
-    );
-    setSavingsTransactions((prev) => [tx, ...prev]);
-
-    if (isOnline) {
-      try {
-        await fetch('/api/savings/transaction', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            accountId: acc.id,
-            transactionType: 'WITHDRAWAL',
-            amount,
-            channel: method,
-            narration: `Withdrawal from ${acc.accountNumber}`,
-          }),
-        });
-        refreshSummary();
-      } catch {
-        // offline
-      }
-    }
-  };
+  const processSavingsWithdrawal = (accountId: string, amount: number, method: SavingsTransaction['paymentMethod']) =>
+    postSavingsTransaction(accountId, amount, method, 'WITHDRAWAL');
 
   const simulateMobileMoneyWebhook = async (
     provider: 'MPESA' | 'AIRTEL_MONEY' | 'TIGO_PESA',
@@ -1145,44 +901,12 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     amount: number,
     phone: string
   ): Promise<{ success: boolean; message: string; receipt?: string }> => {
-    if (isOnline) {
-      try {
-        // /api/mobile-money/webhook is reserved for real provider callbacks
-        // (verified by HMAC signature, not a user session). This "Simulate"
-        // action is a staff-triggered test performed from an authenticated
-        // session, so it goes through the separate /simulate endpoint.
-        const res = await fetch('/api/mobile-money/simulate', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            provider,
-            accountReference: loanNumber,
-            phoneNumber: phone,
-            amount,
-          }),
-        });
-        const data = await res.json();
-        refreshSummary();
-        return {
-          success: true,
-          message: data.message || 'Payment processed successfully',
-          receipt: data.receiptNumber,
-        };
-      } catch {
-        // fallback
-      }
-    }
+    const data = await postToServer('/api/mobile-money/simulate', {
+      provider, accountReference: loanNumber, phoneNumber: phone, amount,
+    });
+    void loadCloudSqlData();
+    return { success: data.status === 'COMPLETED', message: data.message, receipt: data.receiptNumber };
 
-    const loan = loans.find((l) => l.loanAccountNumber === loanNumber);
-    if (!loan) {
-      return { success: false, message: `Loan account ${loanNumber} not found.` };
-    }
-    const payment = await processRepayment(loan.id, amount, 'MOBILE_MONEY', `TX-${Date.now()}`);
-    return {
-      success: true,
-      message: `Webhook simulated and recorded locally.`,
-      receipt: payment.receiptNumber,
-    };
   };
 
   const postManualJournalEntry = async (
@@ -1200,12 +924,12 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const entryNumber = `JV-MAN-${Math.floor(100000 + Math.random() * 900000)}`;
     const journalLines = lines.map((l, idx) => {
-      const coa = chartOfAccounts.find((c) => c.id === l.accountId || c.accountCode === l.accountId);
+      const coa = chartOfAccounts.find((c) => c.id === l.accountId || c.code === l.accountId);
       return {
         id: `jl-man-${Date.now()}-${idx}`,
         accountId: coa?.id || l.accountId,
-        accountCode: coa?.accountCode || l.accountId,
-        accountName: coa?.accountName || 'Account',
+        accountCode: coa?.code || l.accountId,
+        accountName: coa?.name || 'Account',
         entryType: l.entryType,
         amount: roundCurrency(l.amount),
       };
@@ -1226,42 +950,13 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
-    setJournals((prev) => [newJournal, ...prev]);
-
-    // Update COA balances
-    setChartOfAccounts((prev) =>
-      prev.map((acc) => {
-        const matchingLines = journalLines.filter((jl) => jl.accountId === acc.id || jl.accountCode === acc.accountCode);
-        if (matchingLines.length === 0) return acc;
-        let delta = 0;
-        for (const ml of matchingLines) {
-          if (acc.type === 'ASSET' || acc.type === 'EXPENSE') {
-            delta += ml.entryType === 'DEBIT' ? ml.amount : -ml.amount;
-          } else {
-            delta += ml.entryType === 'CREDIT' ? ml.amount : -ml.amount;
-          }
-        }
-        return { ...acc, currentBalance: roundCurrency(acc.currentBalance + delta) };
-      })
-    );
-
-    if (isOnline) {
-      try {
-        await fetch('/api/accounting/journal', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            entryNumber,
-            narration,
-            lines: journalLines,
-          }),
-        });
-      } catch {
-        // saved locally
-      }
-    }
-
-    return newJournal;
+    const saved = await postToServer('/api/accounting/journal', {
+      entryNumber,
+      narration,
+      lines: journalLines,
+    });
+    void loadCloudSqlData();
+    return { ...newJournal, id: saved.id, entryNumber: saved.entryNumber };
   };
 
   const addOfflineRecord = (
@@ -1285,67 +980,28 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const syncOfflineQueue = async () => {
-    if (offlineQueue.length === 0) return;
-
-    if (isOnline) {
-      try {
-        const res = await fetch('/api/offline-sync', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            deviceId: 'field-tablet-kariakoo',
-            queue: offlineQueue,
-          }),
-        });
-        if (res.ok) {
-          setOfflineQueue([]);
-          refreshSummary();
-          return;
-        }
-      } catch {
-        // failed network sync
+    const queue = offlineQueue.filter((item) => item.syncStatus !== 'SYNCED' && item.userId === currentUser?.id);
+    if (queue.length === 0) return 0;
+    const data = await postToServer('/api/offline-sync', { deviceId: queue[0].deviceId, queue });
+    const results = new Map<string, { status: string; error?: string }>(
+      data.results.map((result: any) => [result.localId, result]),
+    );
+    setOfflineQueue((previous) => previous.map((item) => {
+      const result = results.get(item.id);
+      if (!result) return item;
+      if (result.status === 'SUCCESS' || result.status === 'ALREADY_SYNCED') {
+        return { ...item, syncStatus: 'SYNCED', syncedAt: new Date().toISOString() };
       }
-    }
-
-    // Local queue replay
-    const updatedQueue: OfflineSyncRecord[] = [];
-    for (const item of offlineQueue) {
-      if (item.operationType === 'COLLECTION_PAYMENT') {
-        const { loanId, amount, paymentMethod, channelRef } = item.payload;
-        try {
-          await processRepayment(loanId, amount, paymentMethod, channelRef);
-          updatedQueue.push({ ...item, syncStatus: 'SYNCED', syncedAt: new Date().toISOString() });
-        } catch (err: any) {
-          updatedQueue.push({ ...item, syncStatus: 'CONFLICT', conflictReason: err.message });
-        }
-      } else {
-        updatedQueue.push({ ...item, syncStatus: 'SYNCED', syncedAt: new Date().toISOString() });
-      }
-    }
-    setOfflineQueue(updatedQueue);
-  };
-
-  const resetToSeedData = async () => {
-    localStorage.clear();
-    setCustomers(INITIAL_CUSTOMERS);
-    setGroups(INITIAL_GROUPS);
-    setApplications(INITIAL_APPLICATIONS);
-    setLoans(INITIAL_LOANS);
-    setPayments(INITIAL_PAYMENTS);
-    setSavingsAccounts(INITIAL_SAVINGS);
-    setSavingsTransactions([]);
-    setChartOfAccounts(INITIAL_CHART_OF_ACCOUNTS);
-    setJournals(INITIAL_JOURNALS);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setOfflineQueue([]);
-    await loadCloudSqlData();
+      return { ...item, syncStatus: 'CONFLICT', conflictReason: result.error };
+    }));
+    void loadCloudSqlData();
+    return data.syncedCount as number;
   };
 
   return (
     <MfiContext.Provider
       value={{
         currentUser,
-        setCurrentUser,
         isAuthenticated: !!currentUser,
         authToken,
         isAuthLoading,
@@ -1382,14 +1038,12 @@ export const MfiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         approveLoanApplication,
         disburseLoan,
         processRepayment,
-        reverseExistingPayment,
         processSavingsDeposit,
         processSavingsWithdrawal,
         postManualJournalEntry,
         simulateMobileMoneyWebhook,
         syncOfflineQueue,
         addOfflineRecord,
-        resetToSeedData,
       }}
     >
       {children}

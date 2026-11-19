@@ -15,7 +15,8 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '256kb' }));
 
 // JWT Secret & Security
 // Fails closed in production: refuses to start rather than sign tokens with a
@@ -116,16 +117,22 @@ function getRequesterFromToken(req: any): any | null {
 // Requires a valid Bearer token. On success, attaches the decoded payload as
 // req.user. Every mutating route below must use this - a missing token must
 // never silently fall through to an "assume authorized" default.
-function requireAuth(req: any, res: any, next: any) {
+async function requireAuth(req: any, res: any, next: any) {
   const requester = getRequesterFromToken(req);
-  if (!requester) {
-    return res.status(401).json({
-      error: 'Authentication required. Please sign in again.',
-      code: 'UNAUTHENTICATED',
-    });
+  if (!requester?.id) {
+    return res.status(401).json({ error: 'Authentication required. Please sign in again.' });
   }
-  req.user = requester;
-  next();
+  try {
+    const [user] = await getDb().db.select().from(schema.users).where(eq(schema.users.id, requester.id));
+    if (!user?.isActive) {
+      return res.status(401).json({ error: 'This account is unavailable. Please contact your administrator.' });
+    }
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error('Could not verify staff session:', error);
+    res.status(503).json({ error: 'Unable to verify your session. Try again shortly.' });
+  }
 }
 
 // Must be used after requireAuth. Rejects the request unless req.user.role is
@@ -145,79 +152,16 @@ function requireRole(...allowedRoles: string[]) {
   };
 }
 
-// Ensure seed data and database schema migration is populated lazily on first server start
-let isDbInitialized = false;
-async function initDb() {
-  if (!isDbInitialized) {
-    try {
-      const { db } = getDb();
-      await seedDatabaseIfEmpty();
+const demoMode = process.env.IMARA_DEMO_MODE === 'true';
+let demoInitialization: Promise<void> | undefined;
 
-      // Ensure commercial users have hashed passwords for default credentials 'Imara@2025'
-      const defaultHash = bcrypt.hashSync('Imara@2025', 10);
-      const userUpdates = [
-        // Primary Manager Accounts
-        { id: 'usr-amina', username: 'amina.manager', email: 'amina.kimaro@tusonge-mfi.co.tz', firstName: 'Amina', lastName: 'Kimaro', role: 'BRANCH_MANAGER' },
-        { id: 'usr-amina-ho', username: 'amina.ho', email: 'amina.mwamba@tusonge-mfi.co.tz', firstName: 'Amina', lastName: 'Mwamba', role: 'HEAD_OFFICE_MANAGER' },
-        // Field & Loan Officers
-        { id: 'usr-baraka', username: 'baraka.field', email: 'baraka.mushi@tusonge-mfi.co.tz', firstName: 'Baraka', lastName: 'Mushi', role: 'FIELD_OFFICER' },
-        { id: 'usr-baraka-bm', username: 'baraka.bm', email: 'baraka.mkumbo@tusonge-mfi.co.tz', firstName: 'Baraka', lastName: 'Mkumbo', role: 'BRANCH_MANAGER' },
-        { id: 'usr-daudi', username: 'daudi.accountant', email: 'daudi.mrema@tusonge-mfi.co.tz', firstName: 'Daudi', lastName: 'Mrema', role: 'ACCOUNTANT' },
-        { id: 'usr-daudi-lo', username: 'daudi.lo', email: 'daudi.kibona@tusonge-mfi.co.tz', firstName: 'Daudi', lastName: 'Kibona', role: 'LOAN_OFFICER' },
-        // Auditors & Compliance
-        { id: 'usr-neema', username: 'neema.auditor', email: 'neema.massawe@tusonge-mfi.co.tz', firstName: 'Neema', lastName: 'Massawe', role: 'AUDITOR' },
-        { id: 'usr-neema-aud', username: 'neema.aud', email: 'neema.lyimo@tusonge-mfi.co.tz', firstName: 'Neema', lastName: 'Lyimo', role: 'AUDITOR' },
-        { id: 'usr-aud-1', username: 'auditor', email: 'auditor@hudumamfi.co.tz', firstName: 'Mwajuma', lastName: 'Salum', role: 'AUDITOR' },
-        // System Administrator
-        { id: 'usr-admin', username: 'admin', email: 'admin@imara-mfi.co.tz', firstName: 'System', lastName: 'Admin', role: 'SUPER_ADMIN' },
-        { id: 'usr-superadmin', username: 'superadmin', email: 'superadmin@imara-mfi.co.tz', firstName: 'Super', lastName: 'Admin', role: 'SUPER_ADMIN' },
-        // Branch Operations & Cashiers
-        { id: 'usr-bm-1', username: 'john.bm', email: 'john.mwangi@hudumamfi.co.tz', firstName: 'John', lastName: 'Mwangi', role: 'BRANCH_MANAGER' },
-        { id: 'usr-co-1', username: 'neema.co', email: 'neema.amani@hudumamfi.co.tz', firstName: 'Neema', lastName: 'Amani', role: 'CREDIT_OFFICER' },
-        { id: 'usr-rehema', username: 'rehema.co', email: 'rehema.shaban@tusonge-mfi.co.tz', firstName: 'Rehema', lastName: 'Shaban', role: 'COLLECTION_OFFICER' },
-        { id: 'usr-cash-1', username: 'rehema.kimaro', email: 'rehema.kimaro@hudumamfi.co.tz', firstName: 'Rehema', lastName: 'Kimaro', role: 'CASHIER' },
-        { id: 'usr-juma', username: 'juma.acc', email: 'juma.mussa@tusonge-mfi.co.tz', firstName: 'Juma', lastName: 'Mussa', role: 'ACCOUNTANT' },
-      ];
-
-      for (const u of userUpdates) {
-        try {
-          const [existing] = await db.select().from(schema.users).where(eq(schema.users.id, u.id));
-          if (existing) {
-            await db.update(schema.users).set({
-              username: u.username,
-              email: u.email,
-              passwordHash: defaultHash,
-              firstName: u.firstName,
-              lastName: u.lastName,
-              role: u.role,
-              isActive: true,
-              failedLoginAttempts: 0,
-            }).where(eq(schema.users.id, u.id));
-          } else {
-            await db.insert(schema.users).values({
-              id: u.id,
-              username: u.username,
-              email: u.email,
-              passwordHash: defaultHash,
-              firstName: u.firstName,
-              lastName: u.lastName,
-              role: u.role,
-              branchId: 'br-kariakoo',
-              preferredLanguage: 'en',
-              isActive: true,
-              failedLoginAttempts: 0,
-            });
-          }
-        } catch (innerErr) {
-          // ignore duplicate insert errors
-        }
-      }
-
-      isDbInitialized = true;
-    } catch (err) {
-      console.error('Database seeding error:', err);
-    }
-  }
+function initDb() {
+  if (!demoMode) return;
+  demoInitialization ??= seedDatabaseIfEmpty().catch((error) => {
+    demoInitialization = undefined;
+    throw error;
+  });
+  return demoInitialization;
 }
 
 // ==================== AUTHENTICATION ROUTES ====================
@@ -285,7 +229,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Password verification: bcrypt hash comparison only. Seeded demo accounts
-    // are given the real hash for "Imara@2025" in initDb() below, so the demo
+    // receive their initial password from the explicit demo seed, so the demo
     // credentials still work - there is no separate bypass for any account.
     let passwordMatches = false;
     if (user && user.passwordHash) {
@@ -457,34 +401,30 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 // Logout Endpoint
-app.post('/api/auth/logout', async (req, res) => {
+app.post('/api/auth/logout', requireAuth, async (req: any, res) => {
   try {
-    await initDb();
-    const { db } = getDb();
-    const { userId, userName, role } = req.body;
-
-    if (userId) {
-      await db.insert(schema.auditLogs).values({
-        id: `log-auth-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        userId,
-        userName: userName || 'User',
-        userRole: role || 'STAFF',
-        action: 'AUTH_LOGOUT',
-        entityName: 'USER_AUTH',
-        entityId: userId,
-        ipAddress: req.ip || '127.0.0.1',
-        details: `User signed out cleanly from terminal session.`,
-      });
-    }
-
-    res.json({ success: true, message: 'Logged out successfully' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const user = req.user;
+    await getDb().db.insert(schema.auditLogs).values({
+      id: `log-auth-${crypto.randomUUID()}`,
+      userId: user.id,
+      userName: `${user.firstName} ${user.lastName}`,
+      userRole: user.role,
+      action: 'AUTH_LOGOUT',
+      entityName: 'USER_AUTH',
+      entityId: user.id,
+      ipAddress: req.ip,
+      details: 'Signed out from the staff workspace.',
+    });
+    res.sendStatus(204);
+  } catch (error) {
+    console.error('Unable to write sign-out audit event:', error);
+    res.status(503).json({ error: 'The sign-out event could not be written.' });
   }
 });
 
 // Forgot Password OTP Generation
 app.post('/api/auth/forgot-password', async (req, res) => {
+  if (!demoMode) return res.status(404).json({ error: 'This feature is unavailable.' });
   try {
     await initDb();
     const { db } = getDb();
@@ -503,7 +443,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     );
 
     // Generate a secure 6-digit verification code
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins validity
 
     await setPasswordResetOtp(db, cleanIdentifier, otp, expiresAt);
@@ -535,6 +475,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 // Reset Password with OTP
 app.post('/api/auth/reset-password', async (req, res) => {
+  if (!demoMode) return res.status(404).json({ error: 'This feature is unavailable.' });
   try {
     await initDb();
     const { db } = getDb();
@@ -594,7 +535,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 // Demo accounts endpoint for testing different commercial roles
-app.get('/api/auth/demo-users', async (req, res) => {
+app.get('/api/auth/demo-users', (req, res) => {
+  if (!demoMode) return res.sendStatus(404);
   res.json([
     {
       role: 'LOAN_OFFICER',
@@ -889,9 +831,11 @@ app.post('/api/staff/:id/reset-access', requireAuth, requireRole('SUPER_ADMIN', 
 app.get('/api/health', async (req, res) => {
   try {
     await initDb();
-    res.json({ status: 'ok', database: 'connected', region: 'europe-west2' });
-  } catch (err: any) {
-    res.status(500).json({ status: 'error', message: err.message });
+    await getDb().db.select({ id: schema.branches.id }).from(schema.branches).limit(1);
+    res.json({ status: 'ok', database: 'connected' });
+  } catch (error) {
+    console.error('Database readiness check failed:', error);
+    res.status(503).json({ status: 'unavailable', database: 'not_ready' });
   }
 });
 
@@ -903,7 +847,7 @@ app.get('/api/summary', requireAuth, async (req, res) => {
 
     // Portfolio metrics
     const allLoans = await db.select().from(schema.loans);
-    const activeLoans = allLoans.filter((l) => l.status === 'ACTIVE' || l.status === 'DELINQUENT');
+    const activeLoans = allLoans.filter((l) => l.status === 'ACTIVE' || l.status === 'DELINQUENT' || l.status === 'IN_ARREARS');
     const grossPortfolio = activeLoans.reduce((sum, l) => sum + (l.outstandingPrincipal || 0), 0);
     const totalDisbursed = allLoans.reduce((sum, l) => sum + (l.principalAmount || 0), 0);
     
@@ -1189,75 +1133,82 @@ app.patch('/api/applications/:id/review', requireAuth, requireRole('BRANCH_MANAG
   try {
     await initDb();
     const { db } = getDb();
-    const { id } = req.params;
-    const { action, approvedAmount, rejectionReason } = req.body; // action: 'APPROVE' | 'REJECT'
-    const requester = req.user;
+    const result = await db.transaction(async (db) => {
+      const { id } = req.params;
+      const { action, approvedAmount, rejectionReason } = req.body; // action: 'APPROVE' | 'REJECT'
+      const requester = req.user;
+      if (!['APPROVE', 'REJECT'].includes(action) ||
+        (action === 'APPROVE' && parseMoney(approvedAmount) === null)) {
+        return { status: 400, body: { error: 'Choose a valid decision and approval amount.' } };
+      }
 
-    const [appRecord] = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, id));
-    if (!appRecord) {
-      return res.status(404).json({ error: 'Loan application not found' });
-    }
+      const [appRecord] = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, id)).for('update');
+      if (!appRecord) {
+        return { status: 404, body: { error: 'Loan application not found' } };
+      }
 
-    const terminalStatuses = ['APPROVED', 'REJECTED', 'DISBURSED'];
-    if (terminalStatuses.includes(appRecord.status)) {
-      return res.status(409).json({
-        error: `This application has already been reviewed (status: ${appRecord.status}) and cannot be reviewed again.`,
-        code: 'ALREADY_REVIEWED',
+      const terminalStatuses = ['APPROVED', 'REJECTED', 'DISBURSED'];
+      if (terminalStatuses.includes(appRecord.status)) {
+        return { status: 409, body: {
+          error: `This application has already been reviewed (status: ${appRecord.status}) and cannot be reviewed again.`,
+          code: 'ALREADY_REVIEWED',
+        } };
+      }
+
+      // Maker-checker (BR-APPR-01): the person who submitted the application
+      // (the "maker") can never be the one who approves or rejects it (the
+      // "checker"), regardless of their role.
+      if (appRecord.submittedBy && appRecord.submittedBy === requester.id) {
+        return { status: 403, body: {
+          error: 'Maker-checker violation: you submitted this application and cannot review your own submission. Escalate to another authorized reviewer.',
+          code: 'SELF_APPROVAL_FORBIDDEN',
+        } };
+      }
+
+      // Tiered approval limit (BR-APPR-01): Branch Managers may only approve
+      // up to BRANCH_MANAGER_APPROVAL_LIMIT; larger amounts require Head
+      // Office / Super Admin sign-off.
+      if (action === 'APPROVE' && requester.role === 'BRANCH_MANAGER' && Number(approvedAmount) > BRANCH_MANAGER_APPROVAL_LIMIT) {
+        return { status: 403, body: {
+          error: `Branch Managers may approve loans up to TZS ${BRANCH_MANAGER_APPROVAL_LIMIT.toLocaleString()}. This amount (TZS ${Number(approvedAmount).toLocaleString()}) must be escalated to a Head Office Manager.`,
+          code: 'APPROVAL_LIMIT_EXCEEDED',
+        } };
+      }
+
+      // Reviewer identity always comes from the verified token, never the
+      // request body - otherwise a caller could approve as anyone they liked.
+      if (action === 'APPROVE') {
+        await db.update(schema.loanApplications).set({
+          status: 'APPROVED',
+          approvedAmount: Number(approvedAmount),
+          reviewedBy: requester.id,
+        }).where(eq(schema.loanApplications.id, id));
+      } else {
+        await db.update(schema.loanApplications).set({
+          status: 'REJECTED',
+          rejectionReason: rejectionReason || 'Failed credit policy affordability threshold',
+          reviewedBy: requester.id,
+        }).where(eq(schema.loanApplications.id, id));
+      }
+
+      await db.insert(schema.auditLogs).values({
+        id: `log-review-${Date.now()}`,
+        userId: requester.id,
+        userName: `${requester.firstName} ${requester.lastName}`,
+        userRole: requester.role,
+        action: action === 'APPROVE' ? 'LOAN_APPLICATION_APPROVED' : 'LOAN_APPLICATION_REJECTED',
+        entityName: 'LOAN_APPLICATION',
+        entityId: id,
+        ipAddress: req.ip || '127.0.0.1',
+        details: action === 'APPROVE'
+          ? `Approved application ${id} for TZS ${Number(approvedAmount).toLocaleString()}.`
+          : `Rejected application ${id}. Reason: ${rejectionReason || 'Failed credit policy affordability threshold'}`,
       });
-    }
 
-    // Maker-checker (BR-APPR-01): the person who submitted the application
-    // (the "maker") can never be the one who approves or rejects it (the
-    // "checker"), regardless of their role.
-    if (appRecord.submittedBy && appRecord.submittedBy === requester.id) {
-      return res.status(403).json({
-        error: 'Maker-checker violation: you submitted this application and cannot review your own submission. Escalate to another authorized reviewer.',
-        code: 'SELF_APPROVAL_FORBIDDEN',
-      });
-    }
-
-    // Tiered approval limit (BR-APPR-01): Branch Managers may only approve
-    // up to BRANCH_MANAGER_APPROVAL_LIMIT; larger amounts require Head
-    // Office / Super Admin sign-off.
-    if (action === 'APPROVE' && requester.role === 'BRANCH_MANAGER' && Number(approvedAmount) > BRANCH_MANAGER_APPROVAL_LIMIT) {
-      return res.status(403).json({
-        error: `Branch Managers may approve loans up to TZS ${BRANCH_MANAGER_APPROVAL_LIMIT.toLocaleString()}. This amount (TZS ${Number(approvedAmount).toLocaleString()}) must be escalated to a Head Office Manager.`,
-        code: 'APPROVAL_LIMIT_EXCEEDED',
-      });
-    }
-
-    // Reviewer identity always comes from the verified token, never the
-    // request body - otherwise a caller could approve as anyone they liked.
-    if (action === 'APPROVE') {
-      await db.update(schema.loanApplications).set({
-        status: 'APPROVED',
-        approvedAmount: Number(approvedAmount),
-        reviewedBy: requester.id,
-      }).where(eq(schema.loanApplications.id, id));
-    } else {
-      await db.update(schema.loanApplications).set({
-        status: 'REJECTED',
-        rejectionReason: rejectionReason || 'Failed credit policy affordability threshold',
-        reviewedBy: requester.id,
-      }).where(eq(schema.loanApplications.id, id));
-    }
-
-    await db.insert(schema.auditLogs).values({
-      id: `log-review-${Date.now()}`,
-      userId: requester.id,
-      userName: `${requester.firstName} ${requester.lastName}`,
-      userRole: requester.role,
-      action: action === 'APPROVE' ? 'LOAN_APPLICATION_APPROVED' : 'LOAN_APPLICATION_REJECTED',
-      entityName: 'LOAN_APPLICATION',
-      entityId: id,
-      ipAddress: req.ip || '127.0.0.1',
-      details: action === 'APPROVE'
-        ? `Approved application ${id} for TZS ${Number(approvedAmount).toLocaleString()}.`
-        : `Rejected application ${id}. Reason: ${rejectionReason || 'Failed credit policy affordability threshold'}`,
+      const updated = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, id));
+      return { status: 200, body: updated[0] };
     });
-
-    const updated = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, id));
-    res.json(updated[0]);
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -1268,170 +1219,177 @@ app.post('/api/loans/disburse', requireAuth, requireRole('BRANCH_MANAGER', 'HEAD
   try {
     await initDb();
     const { db } = getDb();
-    const { applicationId, disbursementDate, channel } = req.body;
-    const requester = req.user;
+    const result = await db.transaction(async (db) => {
+      const { applicationId, disbursementDate, channel } = req.body;
+      const requester = req.user;
 
-    const [appRecord] = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, applicationId));
-    if (!appRecord) {
-      return res.status(404).json({ error: 'Application not found' });
-    }
-    if (appRecord.status !== 'APPROVED') {
-      return res.status(400).json({ error: 'Only APPROVED applications can be disbursed' });
-    }
-
-    const [product] = await db.select().from(schema.loanProducts).where(eq(schema.loanProducts.id, appRecord.productId));
-    const principal = appRecord.approvedAmount || appRecord.requestedAmount;
-    const tenureMonths = appRecord.tenureMonths;
-    const annualRate = product.annualInterestRate;
-
-    const loanId = `loan-${Date.now()}`;
-    const loanAccountNumber = `LN-${Math.floor(10000 + Math.random() * 90000)}`;
-
-    const startDate = disbursementDate || new Date().toISOString().split('T')[0];
-    const maturity = new Date(startDate);
-    maturity.setMonth(maturity.getMonth() + tenureMonths);
-    const maturityDate = maturity.toISOString().split('T')[0];
-
-    // Create Loan record
-    const newLoan = {
-      id: loanId,
-      loanAccountNumber,
-      applicationId: appRecord.id,
-      customerId: appRecord.customerId,
-      productId: product.id,
-      branchId: 'br-kariakoo',
-      groupId: appRecord.groupId || null,
-      principalAmount: principal,
-      outstandingPrincipal: principal,
-      interestRate: annualRate,
-      tenureMonths,
-      disbursementDate: startDate,
-      maturityDate,
-      status: 'ACTIVE',
-      interestMethod: product.interestMethod,
-      repaymentFrequency: product.repaymentFrequency,
-      daysInArrears: 0,
-      accruedInterest: 0,
-      unpaidFees: 0,
-      unpaidPenalties: 0,
-      totalPaid: 0,
-    };
-
-    await db.insert(schema.loans).values(newLoan);
-
-    // Update application status to DISBURSED
-    await db.update(schema.loanApplications).set({ status: 'DISBURSED' }).where(eq(schema.loanApplications.id, applicationId));
-
-    // Generate installments
-    const installments = [];
-    const monthlyPrincipal = roundCurrency(principal / tenureMonths);
-    const monthlyRate = (annualRate / 100) / 12;
-
-    for (let i = 1; i <= tenureMonths; i++) {
-      const instDueDate = new Date(startDate);
-      instDueDate.setMonth(instDueDate.getMonth() + i);
-      const dueDateStr = instDueDate.toISOString().split('T')[0];
-
-      let instPrincipal = monthlyPrincipal;
-      if (i === tenureMonths) {
-        // adjust last month for rounding
-        instPrincipal = principal - (monthlyPrincipal * (tenureMonths - 1));
+      const [appRecord] = await db.select().from(schema.loanApplications).where(eq(schema.loanApplications.id, applicationId)).for('update');
+      if (!appRecord) {
+        return { status: 404, body: { error: 'Application not found' } };
+      }
+      if (appRecord.status !== 'APPROVED') {
+        return { status: 400, body: { error: 'Only APPROVED applications can be disbursed' } };
       }
 
-      let instInterest = 0;
-      if (product.interestMethod === 'FLAT') {
-        instInterest = roundCurrency((principal * (annualRate / 100) * (tenureMonths / 12)) / tenureMonths);
-      } else {
-        // Reducing balance interest for current month
-        const remainingPrincipal = principal - ((i - 1) * monthlyPrincipal);
-        instInterest = roundCurrency(remainingPrincipal * monthlyRate);
+      const [product] = await db.select().from(schema.loanProducts).where(eq(schema.loanProducts.id, appRecord.productId));
+      const [borrower] = await db.select().from(schema.customers).where(eq(schema.customers.id, appRecord.customerId));
+      if (!borrower || !product) {
+        return { status: 409, body: { error: 'The application is missing its customer or product.' } };
+      }
+      const principal = appRecord.approvedAmount || appRecord.requestedAmount;
+      const tenureMonths = appRecord.tenureMonths;
+      const annualRate = product.annualInterestRate;
+
+      const loanId = `loan-${Date.now()}`;
+      const loanAccountNumber = `LN-${Math.floor(10000 + Math.random() * 90000)}`;
+
+      const startDate = disbursementDate || new Date().toISOString().split('T')[0];
+      const maturity = new Date(startDate);
+      maturity.setMonth(maturity.getMonth() + tenureMonths);
+      const maturityDate = maturity.toISOString().split('T')[0];
+
+      // Create Loan record
+      const newLoan = {
+        id: loanId,
+        loanAccountNumber,
+        applicationId: appRecord.id,
+        customerId: appRecord.customerId,
+        productId: product.id,
+        branchId: borrower.branchId,
+        groupId: appRecord.groupId || null,
+        principalAmount: principal,
+        outstandingPrincipal: principal,
+        interestRate: annualRate,
+        tenureMonths,
+        disbursementDate: startDate,
+        maturityDate,
+        status: 'ACTIVE',
+        interestMethod: product.interestMethod,
+        repaymentFrequency: product.repaymentFrequency,
+        daysInArrears: 0,
+        accruedInterest: 0,
+        unpaidFees: 0,
+        unpaidPenalties: 0,
+        totalPaid: 0,
+      };
+
+      await db.insert(schema.loans).values(newLoan);
+
+      // Update application status to DISBURSED
+      await db.update(schema.loanApplications).set({ status: 'DISBURSED' }).where(eq(schema.loanApplications.id, applicationId));
+
+      // Generate installments
+      const installments = [];
+      const monthlyPrincipal = roundCurrency(principal / tenureMonths);
+      const monthlyRate = (annualRate / 100) / 12;
+
+      for (let i = 1; i <= tenureMonths; i++) {
+        const instDueDate = new Date(startDate);
+        instDueDate.setMonth(instDueDate.getMonth() + i);
+        const dueDateStr = instDueDate.toISOString().split('T')[0];
+
+        let instPrincipal = monthlyPrincipal;
+        if (i === tenureMonths) {
+          // adjust last month for rounding
+          instPrincipal = principal - (monthlyPrincipal * (tenureMonths - 1));
+        }
+
+        let instInterest = 0;
+        if (product.interestMethod === 'FLAT') {
+          instInterest = roundCurrency((principal * (annualRate / 100) * (tenureMonths / 12)) / tenureMonths);
+        } else {
+          // Reducing balance interest for current month
+          const remainingPrincipal = principal - ((i - 1) * monthlyPrincipal);
+          instInterest = roundCurrency(remainingPrincipal * monthlyRate);
+        }
+
+        const totalDue = instPrincipal + instInterest;
+
+        installments.push({
+          id: `inst-${loanId}-${i}`,
+          loanId,
+          installmentNumber: i,
+          dueDate: dueDateStr,
+          principalDue: instPrincipal,
+          interestDue: instInterest,
+          feesDue: 0,
+          totalDue,
+          principalPaid: 0,
+          interestPaid: 0,
+          feesPaid: 0,
+          penaltiesPaid: 0,
+          status: 'PENDING',
+          paidAt: null,
+        });
       }
 
-      const totalDue = instPrincipal + instInterest;
+      if (installments.length > 0) {
+        await db.insert(schema.loanInstallments).values(installments);
+      }
 
-      installments.push({
-        id: `inst-${loanId}-${i}`,
-        loanId,
-        installmentNumber: i,
-        dueDate: dueDateStr,
-        principalDue: instPrincipal,
-        interestDue: instInterest,
-        feesDue: 0,
-        totalDue,
-        principalPaid: 0,
-        interestPaid: 0,
-        feesPaid: 0,
-        penaltiesPaid: 0,
-        status: 'PENDING',
-        paidAt: null,
+      // Double-Entry Accounting Posting:
+      // DR: 1200 Gross Loan Portfolio (Asset increase)
+      // CR: 1020 M-Pesa Settlement / 1010 Cash in Vault (Asset decrease)
+      const journalId = `jnl-${Date.now()}`;
+      const disburseAccount = channel === 'CASH' ? '1010' : '1020';
+      const disburseAccountName = channel === 'CASH' ? 'Cash in Vault' : 'M-Pesa Settlement Float';
+
+      await db.insert(schema.journalEntries).values({
+        id: journalId,
+        entryNumber: `JNL-DISB-${Math.floor(1000 + Math.random() * 9000)}`,
+        transactionDate: startDate,
+        narration: `Disbursement of Loan ${loanAccountNumber} to customer ${appRecord.customerId}`,
+        referenceType: 'DISBURSEMENT',
+        referenceId: loanId,
+        totalDebit: principal,
+        totalCredit: principal,
+        postedBy: requester.id,
       });
-    }
 
-    if (installments.length > 0) {
-      await db.insert(schema.loanInstallments).values(installments);
-    }
+      await db.insert(schema.journalLines).values([
+        {
+          id: `line-${journalId}-1`,
+          journalId,
+          accountCode: '1200',
+          accountName: 'Gross Loan Portfolio',
+          entryType: 'DEBIT',
+          amount: principal,
+        },
+        {
+          id: `line-${journalId}-2`,
+          journalId,
+          accountCode: disburseAccount,
+          accountName: disburseAccountName,
+          entryType: 'CREDIT',
+          amount: principal,
+        },
+      ]);
 
-    // Double-Entry Accounting Posting:
-    // DR: 1200 Gross Loan Portfolio (Asset increase)
-    // CR: 1020 M-Pesa Settlement / 1010 Cash in Vault (Asset decrease)
-    const journalId = `jnl-${Date.now()}`;
-    const disburseAccount = channel === 'CASH' ? '1010' : '1020';
-    const disburseAccountName = channel === 'CASH' ? 'Cash in Vault' : 'M-Pesa Settlement Float';
+      // Update Chart of Account balances
+      await db.update(schema.chartOfAccounts).set({
+        balance: sql`${schema.chartOfAccounts.balance} + ${principal}`,
+      }).where(eq(schema.chartOfAccounts.code, '1200'));
 
-    await db.insert(schema.journalEntries).values({
-      id: journalId,
-      entryNumber: `JNL-DISB-${Math.floor(1000 + Math.random() * 9000)}`,
-      transactionDate: startDate,
-      narration: `Disbursement of Loan ${loanAccountNumber} to customer ${appRecord.customerId}`,
-      referenceType: 'DISBURSEMENT',
-      referenceId: loanId,
-      totalDebit: principal,
-      totalCredit: principal,
-      postedBy: requester.id,
+      await db.update(schema.chartOfAccounts).set({
+        balance: sql`${schema.chartOfAccounts.balance} - ${principal}`,
+      }).where(eq(schema.chartOfAccounts.code, disburseAccount));
+
+      // Audit Log
+      await db.insert(schema.auditLogs).values({
+        id: `log-${Date.now()}`,
+        userId: requester.id,
+        userName: `${requester.firstName} ${requester.lastName}`,
+        userRole: requester.role,
+        action: 'LOAN_DISBURSED',
+        entityName: 'LOAN',
+        entityId: loanId,
+        ipAddress: req.ip || '127.0.0.1',
+        details: `Successfully disbursed TZS ${principal.toLocaleString()} for Loan ${loanAccountNumber} via ${disburseAccountName}.`,
+      });
+
+      return { status: 201, body: { loan: newLoan, installmentsCount: installments.length } };
     });
-
-    await db.insert(schema.journalLines).values([
-      {
-        id: `line-${journalId}-1`,
-        journalId,
-        accountCode: '1200',
-        accountName: 'Gross Loan Portfolio',
-        entryType: 'DEBIT',
-        amount: principal,
-      },
-      {
-        id: `line-${journalId}-2`,
-        journalId,
-        accountCode: disburseAccount,
-        accountName: disburseAccountName,
-        entryType: 'CREDIT',
-        amount: principal,
-      },
-    ]);
-
-    // Update Chart of Account balances
-    await db.update(schema.chartOfAccounts).set({
-      balance: sql`${schema.chartOfAccounts.balance} + ${principal}`,
-    }).where(eq(schema.chartOfAccounts.code, '1200'));
-
-    await db.update(schema.chartOfAccounts).set({
-      balance: sql`${schema.chartOfAccounts.balance} - ${principal}`,
-    }).where(eq(schema.chartOfAccounts.code, disburseAccount));
-
-    // Audit Log
-    await db.insert(schema.auditLogs).values({
-      id: `log-${Date.now()}`,
-      userId: requester.id,
-      userName: `${requester.firstName} ${requester.lastName}`,
-      userRole: requester.role,
-      action: 'LOAN_DISBURSED',
-      entityName: 'LOAN',
-      entityId: loanId,
-      ipAddress: req.ip || '127.0.0.1',
-      details: `Successfully disbursed TZS ${principal.toLocaleString()} for Loan ${loanAccountNumber} via ${disburseAccountName}.`,
-    });
-
-    res.status(201).json({ loan: newLoan, installmentsCount: installments.length });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -1461,196 +1419,244 @@ app.get('/api/loans/:id/installments', requireAuth, async (req, res) => {
   }
 });
 
-// Repayments - Record Payment with Regulatory Cascade
-// Waterfall Order: Penalties -> Fees -> Accrued Interest -> Principal
+function parseMoney(input: unknown): number | null {
+  if (typeof input !== 'number' && typeof input !== 'string') return null;
+  const amount = Number(input);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+const settlementAccounts: Record<string, string> = {
+  CASH: '1010', MPESA: '1020', MOBILE_MONEY: '1020',
+  AIRTEL_MONEY: '1030', TIGO_PESA: '1040', BANK_TRANSFER: '1050',
+};
+
+type Database = ReturnType<typeof getDb>['db'];
+type DatabaseTransaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+async function postRepayment(
+  db: DatabaseTransaction,
+  { loanId, amount, paymentMethod = 'MPESA', referenceNumber }: {
+    loanId: string; amount: unknown; paymentMethod?: string; referenceNumber?: string;
+  },
+  requester: { id: string; firstName: string; lastName: string; role: string },
+  ipAddress: string,
+) {
+  const receivedBy = `${requester.firstName} ${requester.lastName}`;
+  const settlement = Object.hasOwn(settlementAccounts, paymentMethod) ? settlementAccounts[paymentMethod] : undefined;
+  if (!settlement) return { status: 400, body: { error: 'Unsupported payment method.' } };
+  if (typeof loanId !== 'string' || !loanId || (referenceNumber !== undefined &&
+    (typeof referenceNumber !== 'string' || referenceNumber.length > 150))) {
+    return { status: 400, body: { error: 'Invalid loan or payment reference.' } };
+  }
+  const paymentAmount = parseMoney(amount);
+
+  if (paymentAmount === null) {
+    return { status: 400, body: { error: 'Valid payment amount is required' } };
+  }
+
+  const [loan] = await db.select().from(schema.loans).where(eq(schema.loans.id, loanId)).for('update');
+  if (!loan) {
+    return { status: 404, body: { error: 'Loan not found' } };
+  }
+
+  if (referenceNumber) {
+    const [previous] = await db.select().from(schema.repayments).where(and(
+      eq(schema.repayments.loanId, loanId),
+      eq(schema.repayments.referenceNumber, referenceNumber)
+    ));
+    if (previous) {
+      if (previous.amount !== paymentAmount || previous.paymentMethod !== paymentMethod) {
+        return { status: 409, body: { error: 'This reference already belongs to a different payment.' } };
+      }
+      return { status: 200, body: previous };
+    }
+  }
+
+  if (loan.status === 'CLOSED') {
+    return { status: 400, body: { error: 'This loan is closed.' } };
+  }
+
+  let remaining = paymentAmount;
+
+  // 1. Penalties
+  const penaltiesAllocated = Math.min(remaining, loan.unpaidPenalties || 0);
+  remaining -= penaltiesAllocated;
+
+  // 2. Fees
+  const feesAllocated = Math.min(remaining, loan.unpaidFees || 0);
+  remaining -= feesAllocated;
+
+  // 3. Accrued Interest
+  const interestAllocated = Math.min(remaining, loan.accruedInterest > 0 ? loan.accruedInterest : roundCurrency(loan.outstandingPrincipal * (loan.interestRate / 100 / 12)));
+  remaining -= interestAllocated;
+
+  // 4. Principal
+  const principalAllocated = Math.min(remaining, loan.outstandingPrincipal);
+  remaining -= principalAllocated;
+
+  if (roundCurrency(remaining) > 0) {
+    return { status: 400, body: { error: 'Payment exceeds the outstanding amount.' } };
+  }
+
+  const receiptNumber = `RCP-${new Date().getFullYear()}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+  const paymentDate = new Date().toISOString().split('T')[0];
+
+  const repaymentRecord = {
+    id: `rep-${crypto.randomUUID()}`,
+    receiptNumber,
+    loanId,
+    amount: paymentAmount,
+    paymentDate,
+    paymentMethod,
+    referenceNumber: referenceNumber || `TXN-${Math.floor(1000000 + Math.random() * 9000000)}`,
+    principalAllocated,
+    interestAllocated,
+    feesAllocated,
+    penaltiesAllocated,
+    receivedBy: receivedBy || 'Field Officer',
+    isReversed: false,
+    reversalReason: null,
+  };
+
+  await db.insert(schema.repayments).values(repaymentRecord);
+
+  // Update loan record
+  const newOutstanding = Math.max(0, loan.outstandingPrincipal - principalAllocated);
+  const newStatus = newOutstanding === 0 ? 'CLOSED' : (loan.daysInArrears > 0 ? 'ACTIVE' : loan.status);
+
+  await db.update(schema.loans).set({
+    outstandingPrincipal: newOutstanding,
+    unpaidPenalties: Math.max(0, (loan.unpaidPenalties || 0) - penaltiesAllocated),
+    unpaidFees: Math.max(0, (loan.unpaidFees || 0) - feesAllocated),
+    accruedInterest: Math.max(0, (loan.accruedInterest || 0) - interestAllocated),
+    totalPaid: sql`${schema.loans.totalPaid} + ${paymentAmount}`,
+    status: newStatus,
+    daysInArrears: newOutstanding === 0 ? 0 : loan.daysInArrears,
+  }).where(eq(schema.loans.id, loanId));
+
+  // Double-Entry Journal Entry
+  // DR: 1020 M-Pesa / 1010 Cash (Total Amount received)
+  // CR: 1200 Gross Loan Portfolio (Principal reduction)
+  // CR: 4010 Interest on Loans (Interest income)
+  // CR: 4020 Loan Fees (if any)
+  // CR: 4030 Penalties (if any)
+  const journalId = `jnl-${crypto.randomUUID()}`;
+  const debitAccount = settlement;
+  const debitAccountName = paymentMethod === 'CASH' ? 'Cash in Vault' : `${paymentMethod} Settlement Account`;
+
+  await db.insert(schema.journalEntries).values({
+    id: journalId,
+    entryNumber: `JNL-REP-${receiptNumber}`,
+    transactionDate: paymentDate,
+    narration: `Repayment for Loan ${loan.loanAccountNumber} (Receipt ${receiptNumber})`,
+    referenceType: 'REPAYMENT',
+    referenceId: repaymentRecord.id,
+    totalDebit: paymentAmount,
+    totalCredit: paymentAmount,
+    postedBy: requester.id,
+  });
+
+  const lines = [
+    {
+      id: `line-${journalId}-dr`,
+      journalId,
+      accountCode: debitAccount,
+      accountName: debitAccountName,
+      entryType: 'DEBIT',
+      amount: paymentAmount,
+    },
+  ];
+
+  if (principalAllocated > 0) {
+    lines.push({
+      id: `line-${journalId}-cr-prin`,
+      journalId,
+      accountCode: '1200',
+      accountName: 'Gross Loan Portfolio',
+      entryType: 'CREDIT',
+      amount: principalAllocated,
+    });
+    await db.update(schema.chartOfAccounts).set({
+      balance: sql`${schema.chartOfAccounts.balance} - ${principalAllocated}`,
+    }).where(eq(schema.chartOfAccounts.code, '1200'));
+  }
+
+  if (interestAllocated > 0) {
+    lines.push({
+      id: `line-${journalId}-cr-int`,
+      journalId,
+      accountCode: '4010',
+      accountName: 'Interest on Loans',
+      entryType: 'CREDIT',
+      amount: interestAllocated,
+    });
+    await db.update(schema.chartOfAccounts).set({
+      balance: sql`${schema.chartOfAccounts.balance} + ${interestAllocated}`,
+    }).where(eq(schema.chartOfAccounts.code, '4010'));
+  }
+
+  if (penaltiesAllocated > 0) {
+    lines.push({
+      id: `line-${journalId}-cr-pen`,
+      journalId,
+      accountCode: '4030',
+      accountName: 'Late Payment Penalties',
+      entryType: 'CREDIT',
+      amount: penaltiesAllocated,
+    });
+    await db.update(schema.chartOfAccounts).set({
+      balance: sql`${schema.chartOfAccounts.balance} + ${penaltiesAllocated}`,
+    }).where(eq(schema.chartOfAccounts.code, '4030'));
+  }
+
+  if (feesAllocated > 0) {
+    lines.push({
+      id: `line-${journalId}-cr-fee`,
+      journalId,
+      accountCode: '4020',
+      accountName: 'Loan Processing Fees',
+      entryType: 'CREDIT',
+      amount: feesAllocated,
+    });
+    await db.update(schema.chartOfAccounts).set({
+      balance: sql`${schema.chartOfAccounts.balance} + ${feesAllocated}`,
+    }).where(eq(schema.chartOfAccounts.code, '4020'));
+  }
+
+  // Debit Account update
+  await db.update(schema.chartOfAccounts).set({
+    balance: sql`${schema.chartOfAccounts.balance} + ${paymentAmount}`,
+  }).where(eq(schema.chartOfAccounts.code, debitAccount));
+
+  await db.insert(schema.journalLines).values(lines);
+
+  // Audit Log
+  await db.insert(schema.auditLogs).values({
+    id: `log-${crypto.randomUUID()}`,
+    userId: requester.id,
+    userName: receivedBy,
+    userRole: requester.role,
+    action: 'REPAYMENT_POSTED',
+    entityName: 'REPAYMENT',
+    entityId: repaymentRecord.id,
+    ipAddress: ipAddress,
+    details: `Collected TZS ${paymentAmount.toLocaleString()} (Principal: ${principalAllocated}, Interest: ${interestAllocated}) for ${loan.loanAccountNumber}.`,
+  });
+
+  return { status: 201, body: repaymentRecord };
+}
+
 app.post('/api/repayments', requireAuth, async (req: any, res) => {
   try {
-    await initDb();
     const { db } = getDb();
-    const { loanId, amount, paymentMethod, referenceNumber } = req.body;
-    const requester = req.user;
-    const receivedBy = `${requester.firstName} ${requester.lastName}`;
-    const paymentAmount = Number(amount);
-
-    if (!paymentAmount || paymentAmount <= 0) {
-      return res.status(400).json({ error: 'Valid payment amount is required' });
-    }
-
-    const [loan] = await db.select().from(schema.loans).where(eq(schema.loans.id, loanId));
-    if (!loan) {
-      return res.status(404).json({ error: 'Loan not found' });
-    }
-
-    let remaining = paymentAmount;
-
-    // 1. Penalties
-    const penaltiesAllocated = Math.min(remaining, loan.unpaidPenalties || 0);
-    remaining -= penaltiesAllocated;
-
-    // 2. Fees
-    const feesAllocated = Math.min(remaining, loan.unpaidFees || 0);
-    remaining -= feesAllocated;
-
-    // 3. Accrued Interest
-    const interestAllocated = Math.min(remaining, loan.accruedInterest > 0 ? loan.accruedInterest : roundCurrency(loan.outstandingPrincipal * (loan.interestRate / 100 / 12)));
-    remaining -= interestAllocated;
-
-    // 4. Principal
-    const principalAllocated = Math.min(remaining, loan.outstandingPrincipal);
-    remaining -= principalAllocated;
-
-    const receiptNumber = `RCP-2024-${Math.floor(10000 + Math.random() * 90000)}`;
-    const paymentDate = new Date().toISOString().split('T')[0];
-
-    const repaymentRecord = {
-      id: `rep-${Date.now()}`,
-      receiptNumber,
-      loanId,
-      amount: paymentAmount,
-      paymentDate,
-      paymentMethod: paymentMethod || 'MPESA',
-      referenceNumber: referenceNumber || `TXN-${Math.floor(1000000 + Math.random() * 9000000)}`,
-      principalAllocated,
-      interestAllocated,
-      feesAllocated,
-      penaltiesAllocated,
-      receivedBy: receivedBy || 'Field Officer',
-      isReversed: false,
-      reversalReason: null,
-    };
-
-    await db.insert(schema.repayments).values(repaymentRecord);
-
-    // Update loan record
-    const newOutstanding = Math.max(0, loan.outstandingPrincipal - principalAllocated);
-    const newStatus = newOutstanding === 0 ? 'CLOSED' : (loan.daysInArrears > 0 ? 'ACTIVE' : loan.status);
-
-    await db.update(schema.loans).set({
-      outstandingPrincipal: newOutstanding,
-      unpaidPenalties: Math.max(0, (loan.unpaidPenalties || 0) - penaltiesAllocated),
-      unpaidFees: Math.max(0, (loan.unpaidFees || 0) - feesAllocated),
-      accruedInterest: Math.max(0, (loan.accruedInterest || 0) - interestAllocated),
-      totalPaid: sql`${schema.loans.totalPaid} + ${paymentAmount}`,
-      status: newStatus,
-      daysInArrears: newOutstanding === 0 ? 0 : loan.daysInArrears,
-    }).where(eq(schema.loans.id, loanId));
-
-    // Double-Entry Journal Entry
-    // DR: 1020 M-Pesa / 1010 Cash (Total Amount received)
-    // CR: 1200 Gross Loan Portfolio (Principal reduction)
-    // CR: 4010 Interest on Loans (Interest income)
-    // CR: 4020 Loan Fees (if any)
-    // CR: 4030 Penalties (if any)
-    const journalId = `jnl-${Date.now()}`;
-    const debitAccount = paymentMethod === 'CASH' ? '1010' : (paymentMethod === 'AIRTEL_MONEY' ? '1030' : (paymentMethod === 'TIGO_PESA' ? '1040' : '1020'));
-    const debitAccountName = paymentMethod === 'CASH' ? 'Cash in Vault' : `${paymentMethod} Settlement Account`;
-
-    await db.insert(schema.journalEntries).values({
-      id: journalId,
-      entryNumber: `JNL-REP-${Math.floor(1000 + Math.random() * 9000)}`,
-      transactionDate: paymentDate,
-      narration: `Repayment for Loan ${loan.loanAccountNumber} (Receipt ${receiptNumber})`,
-      referenceType: 'REPAYMENT',
-      referenceId: repaymentRecord.id,
-      totalDebit: paymentAmount,
-      totalCredit: paymentAmount,
-      postedBy: requester.id,
-    });
-
-    const lines = [
-      {
-        id: `line-${journalId}-dr`,
-        journalId,
-        accountCode: debitAccount,
-        accountName: debitAccountName,
-        entryType: 'DEBIT',
-        amount: paymentAmount,
-      },
-    ];
-
-    if (principalAllocated > 0) {
-      lines.push({
-        id: `line-${journalId}-cr-prin`,
-        journalId,
-        accountCode: '1200',
-        accountName: 'Gross Loan Portfolio',
-        entryType: 'CREDIT',
-        amount: principalAllocated,
-      });
-      await db.update(schema.chartOfAccounts).set({
-        balance: sql`${schema.chartOfAccounts.balance} - ${principalAllocated}`,
-      }).where(eq(schema.chartOfAccounts.code, '1200'));
-    }
-
-    if (interestAllocated > 0) {
-      lines.push({
-        id: `line-${journalId}-cr-int`,
-        journalId,
-        accountCode: '4010',
-        accountName: 'Interest on Loans',
-        entryType: 'CREDIT',
-        amount: interestAllocated,
-      });
-      await db.update(schema.chartOfAccounts).set({
-        balance: sql`${schema.chartOfAccounts.balance} + ${interestAllocated}`,
-      }).where(eq(schema.chartOfAccounts.code, '4010'));
-    }
-
-    if (penaltiesAllocated > 0) {
-      lines.push({
-        id: `line-${journalId}-cr-pen`,
-        journalId,
-        accountCode: '4030',
-        accountName: 'Late Payment Penalties',
-        entryType: 'CREDIT',
-        amount: penaltiesAllocated,
-      });
-      await db.update(schema.chartOfAccounts).set({
-        balance: sql`${schema.chartOfAccounts.balance} + ${penaltiesAllocated}`,
-      }).where(eq(schema.chartOfAccounts.code, '4030'));
-    }
-
-    if (feesAllocated > 0) {
-      lines.push({
-        id: `line-${journalId}-cr-fee`,
-        journalId,
-        accountCode: '4020',
-        accountName: 'Loan Processing Fees',
-        entryType: 'CREDIT',
-        amount: feesAllocated,
-      });
-      await db.update(schema.chartOfAccounts).set({
-        balance: sql`${schema.chartOfAccounts.balance} + ${feesAllocated}`,
-      }).where(eq(schema.chartOfAccounts.code, '4020'));
-    }
-
-    // Debit Account update
-    await db.update(schema.chartOfAccounts).set({
-      balance: sql`${schema.chartOfAccounts.balance} + ${paymentAmount}`,
-    }).where(eq(schema.chartOfAccounts.code, debitAccount));
-
-    await db.insert(schema.journalLines).values(lines);
-
-    // Audit Log
-    await db.insert(schema.auditLogs).values({
-      id: `log-${Date.now()}`,
-      userId: requester.id,
-      userName: receivedBy,
-      userRole: requester.role,
-      action: 'REPAYMENT_POSTED',
-      entityName: 'REPAYMENT',
-      entityId: repaymentRecord.id,
-      ipAddress: req.ip || '127.0.0.1',
-      details: `Collected TZS ${paymentAmount.toLocaleString()} (Principal: ${principalAllocated}, Interest: ${interestAllocated}) for ${loan.loanAccountNumber}.`,
-    });
-
-    res.status(201).json(repaymentRecord);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    const result = await db.transaction((tx) => postRepayment(tx, req.body, req.user, req.ip));
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error('Could not post repayment:', error);
+    res.status(500).json({ error: 'Could not post the repayment. Check its reference before retrying.' });
   }
 });
 
-// Repayments list
 app.get('/api/repayments', requireAuth, async (req, res) => {
   try {
     await initDb();
@@ -1678,53 +1684,95 @@ app.post('/api/savings/transaction', requireAuth, async (req: any, res) => {
   try {
     await initDb();
     const { db } = getDb();
-    const { accountId, transactionType, amount, channel, narration } = req.body;
-    const txAmount = Number(amount);
-
-    // Withdrawals move money out of the institution - restrict to roles that
-    // handle cash/till operations, unlike deposits which any staff can record.
-    if (transactionType === 'WITHDRAWAL') {
-      const withdrawalRoles = ['CASHIER', 'BRANCH_MANAGER', 'ACCOUNTANT', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'];
-      if (!withdrawalRoles.includes(req.user.role)) {
-        return res.status(403).json({
-          error: `Forbidden: savings withdrawals require one of the following roles: ${withdrawalRoles.join(', ')}.`,
-          code: 'INSUFFICIENT_PERMISSIONS',
-        });
+    const result = await db.transaction(async (db) => {
+      const { accountId, transactionType, amount, channel, narration } = req.body;
+      const txAmount = parseMoney(amount);
+      if (txAmount === null || !['DEPOSIT', 'WITHDRAWAL'].includes(transactionType)) {
+        return { status: 400, body: { error: 'A positive amount and a valid transaction type are required' } };
       }
-    }
 
-    const [account] = await db.select().from(schema.savingsAccounts).where(eq(schema.savingsAccounts.id, accountId));
-    if (!account) {
-      return res.status(404).json({ error: 'Savings account not found' });
-    }
-
-    let newBalance = account.balance;
-    if (transactionType === 'DEPOSIT') {
-      newBalance += txAmount;
-    } else if (transactionType === 'WITHDRAWAL') {
-      const available = account.balance - account.lockedAmount;
-      if (txAmount > available) {
-        return res.status(400).json({ error: `Insufficient withdrawable balance. Available: TZS ${available.toLocaleString()} (Locked: TZS ${account.lockedAmount.toLocaleString()})` });
+      // Withdrawals move money out of the institution - restrict to roles that
+      // handle cash/till operations, unlike deposits which any staff can record.
+      if (transactionType === 'WITHDRAWAL') {
+        const withdrawalRoles = ['CASHIER', 'BRANCH_MANAGER', 'ACCOUNTANT', 'HEAD_OFFICE_MANAGER', 'SUPER_ADMIN'];
+        if (!withdrawalRoles.includes(req.user.role)) {
+          return { status: 403, body: {
+            error: `Forbidden: savings withdrawals require one of the following roles: ${withdrawalRoles.join(', ')}.`,
+            code: 'INSUFFICIENT_PERMISSIONS',
+          } };
+        }
       }
-      newBalance -= txAmount;
-    }
 
-    const txId = `sav-tx-${Date.now()}`;
-    const txRecord = {
-      id: txId,
-      accountId,
-      transactionType,
-      amount: txAmount,
-      balanceAfter: newBalance,
-      narration: narration || `Member ${transactionType.toLowerCase()} via ${channel || 'Cash'}`,
-      channel: channel || 'CASH',
-      reference: `SAV-REF-${Math.floor(100000 + Math.random() * 900000)}`,
-    };
+      const [account] = await db.select().from(schema.savingsAccounts).where(eq(schema.savingsAccounts.id, accountId)).for('update');
+      if (!account) {
+        return { status: 404, body: { error: 'Savings account not found' } };
+      }
 
-    await db.insert(schema.savingsTransactions).values(txRecord);
-    await db.update(schema.savingsAccounts).set({ balance: newBalance }).where(eq(schema.savingsAccounts.id, accountId));
+      let newBalance = account.balance;
+      if (transactionType === 'DEPOSIT') {
+        newBalance += txAmount;
+      } else if (transactionType === 'WITHDRAWAL') {
+        const available = account.balance - account.lockedAmount;
+        if (txAmount > available) {
+          return { status: 400, body: { error: `Insufficient withdrawable balance. Available: TZS ${available.toLocaleString()} (Locked: TZS ${account.lockedAmount.toLocaleString()})` } };
+        }
+        newBalance -= txAmount;
+      }
 
-    res.status(201).json(txRecord);
+      const method = channel || 'CASH';
+      const settlementCode = Object.hasOwn(settlementAccounts, method) ? settlementAccounts[method] : undefined;
+      if (!settlementCode) return { status: 400, body: { error: 'Unsupported savings payment channel.' } };
+
+      const liabilityCode = account.productType === 'COMPULSORY' || account.productType === 'COMPULSORY_COLLATERAL' ? '2020' : '2010';
+      const ledgerAccounts = await db.select().from(schema.chartOfAccounts)
+        .where(inArray(schema.chartOfAccounts.code, [settlementCode, liabilityCode]));
+      if (ledgerAccounts.length !== 2) {
+        return { status: 409, body: { error: 'The required settlement and savings accounts are missing from the ledger.' } };
+      }
+      const isDeposit = transactionType === 'DEPOSIT';
+
+      const txId = `sav-tx-${crypto.randomUUID()}`;
+      const txRecord = {
+        id: txId,
+        accountId,
+        transactionType,
+        amount: txAmount,
+        balanceAfter: newBalance,
+        narration: narration || `Member ${transactionType.toLowerCase()} via ${channel || 'Cash'}`,
+        channel: channel || 'CASH',
+        reference: `SAV-REF-${Math.floor(100000 + Math.random() * 900000)}`,
+      };
+
+      await db.insert(schema.savingsTransactions).values(txRecord);
+      await db.update(schema.savingsAccounts).set({ balance: newBalance }).where(eq(schema.savingsAccounts.id, accountId));
+
+      const journalId = `jnl-${txId}`;
+      await db.insert(schema.journalEntries).values({
+        id: journalId,
+        entryNumber: `JNL-${txId}`,
+        transactionDate: new Date().toISOString().split('T')[0],
+        narration: txRecord.narration,
+        referenceType: 'SAVINGS',
+        referenceId: txId,
+        totalDebit: txAmount,
+        totalCredit: txAmount,
+        postedBy: req.user.id,
+      });
+      await db.insert(schema.journalLines).values(ledgerAccounts.map((ledgerAccount) => ({
+        id: `${journalId}-${ledgerAccount.code}`,
+        journalId,
+        accountCode: ledgerAccount.code,
+        accountName: ledgerAccount.name,
+        entryType: (ledgerAccount.code === settlementCode) === isDeposit ? 'DEBIT' : 'CREDIT',
+        amount: txAmount,
+      })));
+      const delta = isDeposit ? txAmount : -txAmount;
+      await db.update(schema.chartOfAccounts).set({ balance: sql`${schema.chartOfAccounts.balance} + ${delta}` })
+        .where(inArray(schema.chartOfAccounts.code, [settlementCode, liabilityCode]));
+
+      return { status: 201, body: txRecord };
+    });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -1810,297 +1858,204 @@ app.post('/api/accounting/journal', requireAuth, requireRole('ACCOUNTANT', 'BRAN
   try {
     await initDb();
     const { db } = getDb();
-    const { entryNumber, narration, lines } = req.body;
-    const requester = req.user;
+    const result = await db.transaction(async (db) => {
+      const { entryNumber, narration, lines } = req.body;
+      const requester = req.user;
 
-    if (!Array.isArray(lines) || lines.length < 2) {
-      return res.status(400).json({ error: 'At least two balanced journal lines are required' });
-    }
-
-    const totalDebit = lines
-      .filter((l: any) => l.entryType === 'DEBIT')
-      .reduce((sum: number, l: any) => sum + Number(l.amount), 0);
-    const totalCredit = lines
-      .filter((l: any) => l.entryType === 'CREDIT')
-      .reduce((sum: number, l: any) => sum + Number(l.amount), 0);
-
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      return res.status(400).json({
-        error: `Double-entry invariant violated: Total Debits (${totalDebit}) must equal Total Credits (${totalCredit})`,
-      });
-    }
-
-    const journalId = `jnl-${Date.now()}`;
-    const transactionDate = new Date().toISOString().split('T')[0];
-
-    const newEntry = {
-      id: journalId,
-      entryNumber: entryNumber || `JV-MAN-${Math.floor(100000 + Math.random() * 900000)}`,
-      transactionDate,
-      narration: narration || 'Manual Journal Adjustment',
-      referenceType: 'ADJUSTMENT',
-      referenceId: journalId,
-      totalDebit,
-      totalCredit,
-      postedBy: requester.id,
-    };
-
-    await db.insert(schema.journalEntries).values(newEntry);
-
-    const journalLineRecords = lines.map((l: any, idx: number) => ({
-      id: `line-${journalId}-${idx}`,
-      journalId,
-      accountCode: l.accountCode,
-      accountName: l.accountName || 'Account',
-      entryType: l.entryType,
-      amount: Number(l.amount),
-    }));
-
-    await db.insert(schema.journalLines).values(journalLineRecords);
-
-    // Update account balances
-    for (const line of lines) {
-      const amt = Number(line.amount);
-      const isDebit = line.entryType === 'DEBIT';
-      // Assets & Expenses increase on Debit, decrease on Credit
-      // Liabilities, Equity, Revenues increase on Credit, decrease on Debit
-      const [acc] = await db
-        .select()
-        .from(schema.chartOfAccounts)
-        .where(eq(schema.chartOfAccounts.code, line.accountCode));
-
-      if (acc) {
-        let delta = 0;
-        if (acc.type === 'ASSET' || acc.type === 'EXPENSE') {
-          delta = isDebit ? amt : -amt;
-        } else {
-          delta = isDebit ? -amt : amt;
-        }
-        await db
-          .update(schema.chartOfAccounts)
-          .set({ balance: sql`${schema.chartOfAccounts.balance} + ${delta}` })
-          .where(eq(schema.chartOfAccounts.code, line.accountCode));
+      if (!Array.isArray(lines) || lines.length < 2 || lines.some((line) =>
+        !line || !['DEBIT', 'CREDIT'].includes(line.entryType) || parseMoney(line.amount) === null
+      )) {
+        return { status: 400, body: { error: 'At least two balanced journal lines are required' } };
       }
-    }
 
-    // Audit Log
-    await db.insert(schema.auditLogs).values({
-      id: `log-${Date.now()}`,
-      userId: requester.id,
-      userName: `${requester.firstName} ${requester.lastName}`,
-      userRole: requester.role,
-      action: 'MANUAL_JOURNAL_POSTED',
-      entityName: 'JOURNAL_ENTRY',
-      entityId: journalId,
-      ipAddress: req.ip || '127.0.0.1',
-      details: `Posted manual journal voucher ${newEntry.entryNumber} totaling TZS ${totalDebit.toLocaleString()}. Narration: ${narration}`,
-    });
+      const totalDebit = lines
+        .filter((l: any) => l.entryType === 'DEBIT')
+        .reduce((sum: number, l: any) => sum + Number(l.amount), 0);
+      const totalCredit = lines
+        .filter((l: any) => l.entryType === 'CREDIT')
+        .reduce((sum: number, l: any) => sum + Number(l.amount), 0);
 
-    res.status(201).json({ ...newEntry, lines: journalLineRecords });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
-  }
-});
+      if (roundCurrency(totalDebit) !== roundCurrency(totalCredit)) {
+        return { status: 400, body: {
+          error: `Double-entry invariant violated: Total Debits (${totalDebit}) must equal Total Credits (${totalCredit})`,
+        } };
+      }
 
-// Mobile Money C2B Webhook Simulator & Integration
-// Called by the real mobile money provider (M-Pesa/Airtel Money/Tigo Pesa),
-// not a logged-in user - there is no JWT to check. Instead the provider must
-// prove it knows MOMO_WEBHOOK_SECRET by sending a matching signature; the
-// signature is never trusted from the request body, only computed here from
-// a secret only this server and the provider hold.
-app.post('/api/mobile-money/webhook', async (req, res) => {
-  try {
-    await initDb();
-    const { db } = getDb();
-    const { provider, providerTxId, accountReference, phoneNumber, amount } = req.body;
+      const accountCodes = [...new Set<string>(lines.map((line) => line.accountCode).filter((code) => typeof code === 'string'))];
+      if (lines.some((line) => typeof line.accountCode !== 'string') || accountCodes.length === 0) {
+        return { status: 400, body: { error: 'Every line must reference a ledger account.' } };
+      }
+      const accounts = await db.select().from(schema.chartOfAccounts).where(inArray(schema.chartOfAccounts.code, accountCodes));
+      if (accounts.length !== accountCodes.length) {
+        return { status: 400, body: { error: 'Every line must reference an existing ledger account.' } };
+      }
 
-    const txAmount = Number(amount);
-    const txId = providerTxId || `MNO${Date.now()}`;
+      const journalId = `jnl-${crypto.randomUUID()}`;
+      const transactionDate = new Date().toISOString().split('T')[0];
 
-    const expectedSignature = crypto.createHmac('sha256', MOMO_WEBHOOK_SECRET)
-      .update(`${provider}:${txId}:${accountReference}:${txAmount}`)
-      .digest('hex');
-
-    const providedSignature = String(req.headers['x-webhook-signature'] || '');
-    const expectedBuf = Buffer.from(expectedSignature, 'hex');
-    const providedBuf = Buffer.from(providedSignature, 'hex');
-    const signatureValid =
-      providedBuf.length === expectedBuf.length &&
-      crypto.timingSafeEqual(expectedBuf, providedBuf);
-
-    if (!signatureValid) {
-      return res.status(401).json({ error: 'Invalid or missing webhook signature', code: 'INVALID_SIGNATURE' });
-    }
-
-    const signature = expectedSignature;
-
-    // Check for duplicate transaction
-    const existing = await db.select().from(schema.mobileMoneyTransactions).where(eq(schema.mobileMoneyTransactions.providerTxId, txId));
-    if (existing.length > 0) {
-      return res.status(200).json({ status: 'DUPLICATE_IGNORED', message: 'Transaction already processed' });
-    }
-
-    // Try matching loan account number
-    const loansMatching = await db.select().from(schema.loans).where(eq(schema.loans.loanAccountNumber, accountReference));
-    let processingStatus = 'COMPLETED';
-    let receiptNumber = null;
-
-    if (loansMatching.length > 0) {
-      // Auto-post loan repayment
-      const loan = loansMatching[0];
-      const repReq = {
-        loanId: loan.id,
-        amount: txAmount,
-        paymentMethod: provider || 'MPESA',
-        referenceNumber: txId,
-        receivedBy: 'MOBILE_MONEY_GATEWAY',
+      const newEntry = {
+        id: journalId,
+        entryNumber: entryNumber || `JV-MAN-${Math.floor(100000 + Math.random() * 900000)}`,
+        transactionDate,
+        narration: narration || 'Manual Journal Adjustment',
+        referenceType: 'ADJUSTMENT',
+        referenceId: journalId,
+        totalDebit,
+        totalCredit,
+        postedBy: requester.id,
       };
-      
-      const repId = `rep-${Date.now()}`;
-      receiptNumber = `RCP-MNO-${Math.floor(10000 + Math.random() * 90000)}`;
 
-      // waterfall
-      const principalAllocated = Math.min(txAmount, loan.outstandingPrincipal);
-      const interestAllocated = Math.max(0, txAmount - principalAllocated);
+      await db.insert(schema.journalEntries).values(newEntry);
 
-      await db.insert(schema.repayments).values({
-        id: repId,
-        receiptNumber,
-        loanId: loan.id,
-        amount: txAmount,
-        paymentDate: new Date().toISOString().split('T')[0],
-        paymentMethod: provider || 'MPESA',
-        referenceNumber: txId,
-        principalAllocated,
-        interestAllocated,
-        feesAllocated: 0,
-        penaltiesAllocated: 0,
-        receivedBy: 'C2B_AUTOMATION',
-        isReversed: false,
-        reversalReason: null,
+      const journalLineRecords = lines.map((l: any, idx: number) => ({
+        id: `line-${journalId}-${idx}`,
+        journalId,
+        accountCode: l.accountCode,
+        accountName: l.accountName || 'Account',
+        entryType: l.entryType,
+        amount: Number(l.amount),
+      }));
+
+      await db.insert(schema.journalLines).values(journalLineRecords);
+
+      // Update account balances
+      for (const line of lines) {
+        const amt = Number(line.amount);
+        const isDebit = line.entryType === 'DEBIT';
+        // Assets & Expenses increase on Debit, decrease on Credit
+        // Liabilities, Equity, Revenues increase on Credit, decrease on Debit
+        const [acc] = await db
+          .select()
+          .from(schema.chartOfAccounts)
+          .where(eq(schema.chartOfAccounts.code, line.accountCode));
+
+        if (acc) {
+          let delta = 0;
+          if (acc.type === 'ASSET' || acc.type === 'EXPENSE') {
+            delta = isDebit ? amt : -amt;
+          } else {
+            delta = isDebit ? -amt : amt;
+          }
+          await db
+            .update(schema.chartOfAccounts)
+            .set({ balance: sql`${schema.chartOfAccounts.balance} + ${delta}` })
+            .where(eq(schema.chartOfAccounts.code, line.accountCode));
+        }
+      }
+
+      // Audit Log
+      await db.insert(schema.auditLogs).values({
+        id: `log-${crypto.randomUUID()}`,
+        userId: requester.id,
+        userName: `${requester.firstName} ${requester.lastName}`,
+        userRole: requester.role,
+        action: 'MANUAL_JOURNAL_POSTED',
+        entityName: 'JOURNAL_ENTRY',
+        entityId: journalId,
+        ipAddress: req.ip || '127.0.0.1',
+        details: `Posted manual journal voucher ${newEntry.entryNumber} totaling TZS ${totalDebit.toLocaleString()}. Narration: ${narration}`,
       });
 
-      await db.update(schema.loans).set({
-        outstandingPrincipal: Math.max(0, loan.outstandingPrincipal - principalAllocated),
-        totalPaid: sql`${schema.loans.totalPaid} + ${txAmount}`,
-      }).where(eq(schema.loans.id, loan.id));
-    }
-
-    // Record webhook log
-    await db.insert(schema.mobileMoneyTransactions).values({
-      id: `mno-tx-${Date.now()}`,
-      provider: provider || 'MPESA',
-      providerTxId: txId,
-      accountReference,
-      phoneNumber,
-      amount: txAmount,
-      hmacSignature: signature,
-      processingStatus,
-      receiptNumber,
+      return { status: 201, body: { ...newEntry, lines: journalLineRecords } };
     });
-
-    res.status(200).json({
-      status: 'SUCCESS',
-      providerTxId: txId,
-      receiptNumber,
-      message: 'Mobile money C2B callback verified and ledger updated',
-    });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Staff-triggered test/demo action ("Simulate Mobile Money Payment" in the
-// UI) - this is an authenticated action performed by a logged-in staff
-// member, not a real provider callback, so it is gated by requireAuth rather
-// than a webhook signature. It shares the webhook's repayment-application
-// logic but is recorded as SIMULATED so it's distinguishable in the audit
-// trail from a genuine mobile money confirmation.
-app.post('/api/mobile-money/simulate', requireAuth, async (req: any, res) => {
+async function recordMobileMoney(
+  input: { provider: string; providerTxId: string; accountReference: string; phoneNumber: string; amount: number },
+  signature: string,
+  requester: { id: string; firstName: string; lastName: string; role: string },
+  ipAddress: string,
+) {
+  const { db } = getDb();
+  return db.transaction(async (tx) => {
+    const { provider, providerTxId, accountReference, phoneNumber, amount } = input;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${providerTxId}))`);
+    const [previous] = await tx.select().from(schema.mobileMoneyTransactions)
+      .where(eq(schema.mobileMoneyTransactions.providerTxId, providerTxId));
+    if (previous) {
+      if (previous.amount !== amount || previous.accountReference !== accountReference || previous.provider !== provider) {
+        return { status: 409, body: { error: 'Provider reference conflicts with an existing payment.' } };
+      }
+      return { status: 200, body: { status: 'DUPLICATE_IGNORED', receiptNumber: previous.receiptNumber } };
+    }
+
+    const [loan] = await tx.select({ id: schema.loans.id }).from(schema.loans)
+      .where(eq(schema.loans.loanAccountNumber, accountReference));
+    const posting = loan
+      ? await postRepayment(tx, { loanId: loan.id, amount, paymentMethod: provider, referenceNumber: `MOMO-${providerTxId}` }, requester, ipAddress)
+      : null;
+    const receiptNumber = posting && 'receiptNumber' in posting.body ? posting.body.receiptNumber : null;
+    const processingStatus = receiptNumber ? 'COMPLETED' : 'REQUIRES_REVIEW';
+    await tx.insert(schema.mobileMoneyTransactions).values({
+      id: `mno-tx-${crypto.randomUUID()}`, provider, providerTxId, accountReference, phoneNumber, amount,
+      hmacSignature: signature, processingStatus, receiptNumber,
+    });
+    return { status: 200, body: {
+      status: processingStatus,
+      providerTxId,
+      receiptNumber,
+      message: receiptNumber ? 'Payment posted to the ledger.' : 'Payment recorded for reconciliation.',
+    } };
+  });
+}
+
+app.post('/api/mobile-money/webhook', async (req, res) => {
+  const { provider, providerTxId, accountReference, phoneNumber } = req.body;
+  const amount = parseMoney(req.body.amount);
+  if (!amount || !['MPESA', 'AIRTEL_MONEY', 'TIGO_PESA'].includes(provider) ||
+    typeof providerTxId !== 'string' || !providerTxId || typeof accountReference !== 'string' ||
+    !accountReference || typeof phoneNumber !== 'string') {
+    return res.status(400).json({ error: 'A valid provider, payment reference, account and amount are required.' });
+  }
+  const signature = crypto.createHmac('sha256', MOMO_WEBHOOK_SECRET)
+    .update(`${provider}:${providerTxId}:${accountReference}:${amount}`).digest('hex');
+  const supplied = String(req.headers['x-webhook-signature'] || '');
+  if (!/^[0-9a-f]{64}$/i.test(supplied) || !crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(supplied, 'hex'))) {
+    return res.status(401).json({ error: 'Invalid or missing webhook signature.' });
+  }
   try {
-    await initDb();
-    const { db } = getDb();
-    const { provider, accountReference, phoneNumber, amount } = req.body;
-    const requester = req.user;
-
-    const txAmount = Number(amount);
-    if (!txAmount || txAmount <= 0) {
-      return res.status(400).json({ error: 'Valid amount is required' });
-    }
-
-    const txId = `SIM-${provider || 'MPESA'}-${Date.now()}`;
-
-    const loansMatching = await db.select().from(schema.loans).where(eq(schema.loans.loanAccountNumber, accountReference));
-    let receiptNumber = null;
-
-    if (loansMatching.length > 0) {
-      const loan = loansMatching[0];
-      receiptNumber = `RCP-MNO-${Math.floor(10000 + Math.random() * 90000)}`;
-
-      const principalAllocated = Math.min(txAmount, loan.outstandingPrincipal);
-      const interestAllocated = Math.max(0, txAmount - principalAllocated);
-
-      await db.insert(schema.repayments).values({
-        id: `rep-${Date.now()}`,
-        receiptNumber,
-        loanId: loan.id,
-        amount: txAmount,
-        paymentDate: new Date().toISOString().split('T')[0],
-        paymentMethod: provider || 'MPESA',
-        referenceNumber: txId,
-        principalAllocated,
-        interestAllocated,
-        feesAllocated: 0,
-        penaltiesAllocated: 0,
-        receivedBy: `${requester.firstName} ${requester.lastName}`,
-        isReversed: false,
-        reversalReason: null,
-      });
-
-      await db.update(schema.loans).set({
-        outstandingPrincipal: Math.max(0, loan.outstandingPrincipal - principalAllocated),
-        totalPaid: sql`${schema.loans.totalPaid} + ${txAmount}`,
-      }).where(eq(schema.loans.id, loan.id));
-    }
-
-    await db.insert(schema.mobileMoneyTransactions).values({
-      id: `mno-tx-${Date.now()}`,
-      provider: provider || 'MPESA',
-      providerTxId: txId,
-      accountReference,
-      phoneNumber,
-      amount: txAmount,
-      hmacSignature: 'SIMULATED-NO-SIGNATURE',
-      processingStatus: loansMatching.length > 0 ? 'COMPLETED' : 'FAILED',
-      receiptNumber,
-    });
-
-    await db.insert(schema.auditLogs).values({
-      id: `log-momosim-${Date.now()}`,
-      userId: requester.id,
-      userName: `${requester.firstName} ${requester.lastName}`,
-      userRole: requester.role,
-      action: 'MOBILE_MONEY_PAYMENT_SIMULATED',
-      entityName: 'MOBILE_MONEY_TRANSACTION',
-      entityId: txId,
-      ipAddress: req.ip || '127.0.0.1',
-      details: `Simulated ${provider || 'MPESA'} payment of TZS ${txAmount.toLocaleString()} against ${accountReference}.`,
-    });
-
-    res.status(200).json({
-      status: loansMatching.length > 0 ? 'SUCCESS' : 'NO_MATCHING_LOAN',
-      providerTxId: txId,
-      receiptNumber,
-      message: loansMatching.length > 0
-        ? 'Simulated mobile money payment applied and ledger updated'
-        : `No active loan found for account reference ${accountReference}`,
-    });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    const result = await recordMobileMoney({ provider, providerTxId, accountReference, phoneNumber, amount }, signature,
+      { id: 'mobile-money', firstName: 'Mobile Money', lastName: 'Gateway', role: 'SYSTEM' }, req.ip);
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error('Mobile money callback failed:', error);
+    res.status(500).json({ error: 'Unable to record callback.' });
   }
 });
 
-// Audit Logs
+app.post('/api/mobile-money/simulate', requireAuth, async (req: any, res) => {
+  if (!demoMode) return res.sendStatus(404);
+  const { provider, accountReference, phoneNumber } = req.body;
+  const amount = parseMoney(req.body.amount);
+  if (!amount || !['MPESA', 'AIRTEL_MONEY', 'TIGO_PESA'].includes(provider) ||
+    typeof accountReference !== 'string' || !accountReference || typeof phoneNumber !== 'string') {
+    return res.status(400).json({ error: 'A valid provider, account and amount are required.' });
+  }
+  try {
+    const result = await recordMobileMoney({
+      provider, providerTxId: `DEMO-${crypto.randomUUID()}`, accountReference, phoneNumber, amount,
+    }, 'demo', req.user, req.ip);
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error('Mobile money simulation failed:', error);
+    res.status(500).json({ error: 'Unable to simulate payment.' });
+  }
+});
+
+app.get('/api/mobile-money/transactions', requireAuth, async (_req, res) => {
+  try {
+    const transactions = await getDb().db.select().from(schema.mobileMoneyTransactions)
+      .orderBy(desc(schema.mobileMoneyTransactions.receivedAt)).limit(100);
+    res.json(transactions.map(({ hmacSignature, ...item }) => ({ ...item, signatureVerified: hmacSignature !== 'demo' })));
+  } catch {
+    res.status(503).json({ error: 'Unable to load mobile money transactions.' });
+  }
+});
+
 app.get('/api/audit-logs', requireAuth, async (req, res) => {
   try {
     await initDb();
@@ -2113,96 +2068,55 @@ app.get('/api/audit-logs', requireAuth, async (req, res) => {
 });
 
 // Offline Sync Batch Endpoint
-app.post('/api/offline-sync', requireAuth, async (req, res) => {
-  try {
-    await initDb();
-    const { db } = getDb();
-    const { deviceId, queue } = req.body; // Array of queued local operations
-
-    if (!Array.isArray(queue)) {
-      return res.status(400).json({ error: 'Queue must be an array' });
+app.post('/api/offline-sync', requireAuth, async (req: any, res) => {
+  const { deviceId, queue } = req.body;
+  if (!Array.isArray(queue) || queue.length > 100) {
+    return res.status(400).json({ error: 'Supply an array of at most 100 queued operations.' });
+  }
+  const { db } = getDb();
+  const results = [];
+  for (const item of queue) {
+    const localId = item?.localId ?? item?.id;
+    if (typeof localId !== 'string' || !localId || item?.operationType !== 'COLLECTION_PAYMENT' || !item.payload?.loanId) {
+      results.push({ localId, status: 'FAILED', error: 'Only valid collection payments can be synced.' });
+      continue;
     }
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${localId}))`);
+        const [existing] = await tx.select().from(schema.offlineSyncRecords).where(eq(schema.offlineSyncRecords.localId, localId));
+        if (existing) return { localId, status: 'ALREADY_SYNCED' };
 
-    const results = [];
+        const { loanId, amount, paymentMethod, channelRef } = item.payload;
+        const posted = await postRepayment(tx, {
+          loanId, amount, paymentMethod: paymentMethod || 'CASH',
+          referenceNumber: channelRef || `OFFLINE-${localId}`,
+        }, req.user, req.ip);
+        if ('error' in posted.body) return { localId, status: 'FAILED', error: posted.body.error };
 
-    for (const item of queue) {
-      try {
-        // Check if already processed
-        const existing = await db.select().from(schema.offlineSyncRecords).where(eq(schema.offlineSyncRecords.localId, item.localId));
-        if (existing.length > 0) {
-          results.push({ localId: item.localId, status: 'ALREADY_SYNCED' });
-          continue;
-        }
-
-        // Record sync event
-        await db.insert(schema.offlineSyncRecords).values({
-          id: `sync-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          localId: item.localId,
-          deviceId: deviceId || 'field-tablet-01',
-          operationType: item.operationType,
+        await tx.insert(schema.offlineSyncRecords).values({
+          id: `sync-${crypto.randomUUID()}`,
+          localId, deviceId: deviceId || 'field-device', operationType: item.operationType,
           payloadJson: JSON.stringify(item.payload),
           clientTimestamp: item.clientTimestamp || new Date().toISOString(),
-          syncStatus: 'SYNCED',
-          syncedAt: new Date(),
-          errorMessage: null,
-          retryCount: 0,
+          syncStatus: 'SYNCED', syncedAt: new Date(), retryCount: 0,
         });
-
-        // If operation is a field collection payment, apply repayment to database
-        if (item.operationType === 'COLLECTION_PAYMENT' && item.payload) {
-          const { loanId, amount, paymentMethod, channelRef } = item.payload;
-          if (loanId && amount) {
-            const [loan] = await db.select().from(schema.loans).where(eq(schema.loans.id, loanId));
-            if (loan) {
-              const paymentAmount = Number(amount);
-              const principalAllocated = Math.min(paymentAmount, loan.outstandingPrincipal);
-              const interestAllocated = Math.max(0, paymentAmount - principalAllocated);
-              const receiptNumber = channelRef || `RCP-OFF-${Date.now().toString().slice(-6)}`;
-
-              await db.insert(schema.repayments).values({
-                id: `rep-off-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                receiptNumber,
-                loanId,
-                amount: paymentAmount,
-                paymentDate: (item.clientTimestamp || new Date().toISOString()).split('T')[0],
-                paymentMethod: paymentMethod || 'CASH',
-                referenceNumber: channelRef || `OFFLINE-SYNC-${item.localId}`,
-                principalAllocated,
-                interestAllocated,
-                feesAllocated: 0,
-                penaltiesAllocated: 0,
-                receivedBy: item.payload.officer || 'Field Officer',
-                isReversed: false,
-                reversalReason: null,
-              });
-
-              const newOutstanding = Math.max(0, loan.outstandingPrincipal - principalAllocated);
-              await db.update(schema.loans).set({
-                outstandingPrincipal: newOutstanding,
-                totalPaid: sql`${schema.loans.totalPaid} + ${paymentAmount}`,
-                status: newOutstanding === 0 ? 'CLOSED' : loan.status,
-              }).where(eq(schema.loans.id, loanId));
-            }
-          }
-        }
-
-        results.push({ localId: item.localId, status: 'SUCCESS' });
-      } catch (innerErr: any) {
-        results.push({ localId: item.localId, status: 'FAILED', error: innerErr.message });
-      }
+        return { localId, status: 'SUCCESS' };
+      });
+      results.push(result);
+    } catch (error) {
+      console.error('Offline payment could not be posted:', error);
+      results.push({ localId, status: 'FAILED', error: 'Unable to post the collection payment.' });
     }
-
-    res.json({ syncedCount: results.filter((r) => r.status === 'SUCCESS').length, results });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
+  res.json({ syncedCount: results.filter((row) => row.status === 'SUCCESS').length, results });
 });
 
 // Vite Middleware for Development / Static serving for Production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: process.env.IMARA_DISABLE_HMR === 'true' ? false : undefined },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -2214,8 +2128,9 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Huduma MFI Operating System server running on http://0.0.0.0:${PORT}`);
+  const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+  app.listen(PORT, host, () => {
+    console.log(`Imara Finance running on http://${host}:${PORT}`);
   });
 }
 

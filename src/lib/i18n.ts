@@ -1,6 +1,10 @@
 export type Language = 'en' | 'sw';
 
 export interface Translations {
+  trialBalance: string;
+  fieldCollection: string;
+  syncNow: string;
+  customer: string;
   appName: string;
   appSubtitle: string;
   dashboard: string;
@@ -129,6 +133,10 @@ export interface Translations {
 
 export const translations: Record<Language, Translations> = {
   en: {
+    trialBalance: 'Trial balance',
+    fieldCollection: 'Field collection',
+    syncNow: 'Sync now',
+    customer: 'Customer',
     appName: 'IMARA FINANCE',
     appSubtitle: 'Microfinance Management Platform',
     dashboard: 'Dashboard & MIS',
@@ -251,6 +259,10 @@ export const translations: Record<Language, Translations> = {
     regulatoryCompliancePillar: 'Bank of Tanzania (BOT) prudential returns & IFRS 9 ECL provisioning',
   },
   sw: {
+    trialBalance: 'Mizania ya majaribio',
+    fieldCollection: 'Makusanyo ya uwanjani',
+    syncNow: 'Sawazisha sasa',
+    customer: 'Mteja',
     appName: 'IMARA FINANCE',
     appSubtitle: 'Mfumo wa Usimamizi wa Taasisi za Kifedha',
     dashboard: 'Dashibodi & Takwimu',
