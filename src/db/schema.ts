@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, integer, doublePrecision, boolean, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, text, timestamp, integer, doublePrecision, boolean, uuid, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const branches = pgTable('branches', {
   id: text('id').primaryKey(),
@@ -49,8 +50,27 @@ export const customers = pgTable('customers', {
   latitude: doublePrecision('latitude'),
   longitude: doublePrecision('longitude'),
   documentUrl: text('document_url'),
+  createdBy: text('created_by').references(() => users.id),
+  archivedAt: timestamp('archived_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+}, (table) => [index('customers_created_by_idx').on(table.createdBy)]);
+
+export const memberRequests = pgTable('member_requests', {
+  id: text('id').primaryKey(),
+  kind: text('kind').$type<'CREATE' | 'REMOVE'>().notNull(),
+  state: text('state').$type<'PENDING' | 'APPROVED' | 'REJECTED'>().default('PENDING').notNull(),
+  requestedBy: text('requested_by').notNull().references(() => users.id),
+  customerId: text('customer_id').references(() => customers.id),
+  payload: jsonb('payload').$type<typeof customers.$inferInsert>(),
+  reason: text('reason'),
+  reviewedBy: text('reviewed_by').references(() => users.id),
+  reviewedAt: timestamp('reviewed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => [
+  index('member_requests_requested_by_idx').on(table.requestedBy),
+  uniqueIndex('member_requests_pending_remove_idx').on(table.customerId)
+    .where(sql`${table.kind} = 'REMOVE' AND ${table.state} = 'PENDING'`),
+]);
 
 export const groups = pgTable('groups', {
   id: text('id').primaryKey(),

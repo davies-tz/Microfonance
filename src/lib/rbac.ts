@@ -136,31 +136,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ],
 
   BRANCH_MANAGER: [
-    'users.create',
-    'users.read',
-    'users.update',
-    'users.disable',
-    'users.assign_branch',
     'customers.create',
     'customers.read',
-    'customers.update',
-    'customers.assign',
-    'loans.create',
-    'loans.read',
-    'loans.update',
-    'loans.submit',
-    'loans.assess',
-    'loans.approve',
-    'loans.reject',
-    'loans.disburse',
-    'repayments.create',
-    'repayments.read',
-    'savings.create',
-    'savings.read',
-    'accounting.read',
-    'reports.read',
-    'reports.export',
-    'audit.read',
   ],
 
   FIELD_OFFICER: [
@@ -242,12 +219,7 @@ export function hasPermission(role: string | undefined, permission: Permission):
  * Check if a user can create or manage staff accounts
  */
 export function canManageStaff(role: string | undefined): boolean {
-  return (
-    role === 'SUPER_ADMIN' ||
-    role === 'HEAD_OFFICE_MANAGER' ||
-    role === 'MANAGER' ||
-    role === 'BRANCH_MANAGER'
-  );
+  return role === 'SUPER_ADMIN';
 }
 
 /**

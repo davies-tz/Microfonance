@@ -1,3 +1,5 @@
+import { MemberRequests } from './MemberRequests';
+import { memberRequestRoles } from '../lib/workspaceAccess';
 import React, { useState } from 'react';
 import {
   Check,
@@ -21,6 +23,8 @@ import { formatTZS, translations } from '../lib/i18n';
 export const CustomersView: React.FC = () => {
   const {
     customers,
+    currentUser,
+    requestMemberRemoval,
     branches,
     currentBranchId,
     createCustomer,
@@ -48,7 +52,12 @@ export const CustomersView: React.FC = () => {
   const [businessType, setBusinessType] = useState('');
   const [monthlyRevenue, setMonthlyRevenue] = useState(2500000);
   const [monthlyExpenses, setMonthlyExpenses] = useState(1200000);
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useState(currentUser?.branchId ?? '');
+  const [requestVersion, setRequestVersion] = useState(0);
+  const [removalReason, setRemovalReason] = useState('');
+  const [requestingRemoval, setRequestingRemoval] = useState(false);
+  const isAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const canRequest = memberRequestRoles.includes(currentUser?.role ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const filteredCustomers = customers.filter((c) => {
@@ -97,13 +106,13 @@ export const CustomersView: React.FC = () => {
         documents: initialDocs,
       });
 
-      showToast(
-        'success',
-        language === 'sw' ? 'Mteja Amesajiliwa' : 'Customer Registered',
-        language === 'sw'
-          ? `${cust.firstName} ${cust.lastName} (${cust.customerNumber}) amehifadhiwa kwenye Cloud SQL.`
-          : `${cust.firstName} ${cust.lastName} (${cust.customerNumber}) saved to Cloud SQL database.`
-      );
+      if (cust) {
+        showToast('success', language === 'sw' ? 'Mteja Amesajiliwa' : 'Customer Registered', cust.customerNumber);
+      } else {
+        setRequestVersion((version) => version + 1);
+        showToast('success', language === 'sw' ? 'Ombi Limetumwa' : 'Request Submitted',
+          language === 'sw' ? 'Linasubiri idhini ya Super Admin.' : 'Pending Super Admin approval.');
+      }
 
       // Reset and close
       setFirstName('');
@@ -134,6 +143,23 @@ export const CustomersView: React.FC = () => {
     );
   };
 
+  async function submitRemoval(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCustomer || !removalReason.trim()) return;
+    setRequestingRemoval(true);
+    try {
+      await requestMemberRemoval(selectedCustomer.id, removalReason);
+      setRemovalReason('');
+      setRequestVersion((version) => version + 1);
+      showToast('success', language === 'sw' ? 'Ombi Limetumwa' : 'Removal Requested',
+        language === 'sw' ? 'Mteja bado yupo hadi ombi liidhinishwe.' : 'The member stays active until approval.');
+    } catch (error) {
+      showToast('error', 'Request Failed', error instanceof Error ? error.message : 'Could not submit removal.');
+    } finally {
+      setRequestingRemoval(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
@@ -147,14 +173,18 @@ export const CustomersView: React.FC = () => {
           </p>
         </div>
 
+        {(isAdmin || canRequest) && (
         <button
           onClick={() => setShowCreateModal(true)}
           className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center space-x-2 transition-all shadow-lg shadow-emerald-950/30 self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
-          <span>{t.newCustomer}</span>
+          <span>{isAdmin ? t.newCustomer : (language === 'sw' ? 'Omba Usajili' : 'Request Registration')}</span>
         </button>
+        )}
       </div>
+
+      {(isAdmin || canRequest) && <MemberRequests version={requestVersion} />}
 
       {/* Search & Filter Bar */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-center space-x-3">
@@ -283,12 +313,26 @@ export const CustomersView: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={() => setSelectedCustomer(null)}
+              onClick={() => { setSelectedCustomer(null); setRemovalReason(''); }}
               className="text-slate-400 hover:text-white p-1 rounded-lg"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
+          {canRequest && (
+            <form onSubmit={submitRemoval} className="my-4 space-y-2">
+              <label className="block text-sm text-slate-300">
+                {language === 'sw' ? 'Sababu ya kuomba kuondoa mwanachama' : 'Reason for requesting removal'}
+                <textarea required maxLength={500} value={removalReason}
+                  onChange={(event) => setRemovalReason(event.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 p-2" />
+              </label>
+              <button type="submit" disabled={requestingRemoval} className="imara-button">
+                {language === 'sw' ? 'Omba Kuondoa' : 'Request Removal'}
+              </button>
+            </form>
+          )}
+
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* KYC & Identification */}
@@ -330,7 +374,7 @@ export const CustomersView: React.FC = () => {
                       <div className="flex items-center gap-1.5">
                         {doc.verificationStatus === 'VERIFIED' ? (
                           <span className="text-emerald-400 text-[10px] font-bold">Verified</span>
-                        ) : (
+                        ) : isAdmin ? (
                           <>
                             <button
                               onClick={() => handleVerifyKyc(selectedCustomer.id, doc.id, 'VERIFIED')}
@@ -345,7 +389,7 @@ export const CustomersView: React.FC = () => {
                               Reject
                             </button>
                           </>
-                        )}
+                        ) : <span className="text-slate-400 text-[10px]">{doc.verificationStatus}</span>}
                       </div>
                     </div>
                   ))
@@ -534,6 +578,7 @@ export const CustomersView: React.FC = () => {
                 <label className="block text-slate-400 mb-1">{t.branch}</label>
                 <select
                   required
+                  disabled={!isAdmin}
                   value={branchId}
                   onChange={(e) => setBranchId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white focus:border-emerald-500 focus:outline-none"
