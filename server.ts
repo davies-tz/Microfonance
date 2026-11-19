@@ -646,6 +646,15 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
       return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
     }
 
+    if (typeof branchId !== 'string' || !branchId) {
+      return res.status(400).json({ error: 'Select an active branch before creating an employee.' });
+    }
+    const [branch] = await db.select({ id: schema.branches.id }).from(schema.branches)
+      .where(and(eq(schema.branches.id, branchId), eq(schema.branches.isActive, true)));
+    if (!branch) {
+      return res.status(400).json({ error: 'The selected branch does not exist or is inactive.' });
+    }
+
     const newUserId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const cleanUsername = (username || `${firstName.toLowerCase()}.${lastName.toLowerCase()}`).trim();
     const passwordHash = bcrypt.hashSync(initialPassword || 'Imara@2025', 10);
@@ -658,7 +667,7 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       role,
-      branchId: branchId || 'br-kariakoo',
+      branchId: branch.id,
       preferredLanguage: 'en',
       isActive: true,
       failedLoginAttempts: 0,
@@ -674,7 +683,7 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
       entityName: 'USERS',
       entityId: newUserId,
       ipAddress: req.ip || '127.0.0.1',
-      details: `Created new employee account: ${firstName} ${lastName} (${cleanUsername}) with role ${role} assigned to branch ${branchId || 'br-kariakoo'}.`,
+      details: `Created new employee account: ${firstName} ${lastName} (${cleanUsername}) with role ${role} assigned to branch ${branch.id}.`,
     });
 
     const newEmployee = {
@@ -685,15 +694,15 @@ app.post('/api/staff', requireAuth, requireRole('SUPER_ADMIN', 'HEAD_OFFICE_MANA
       email,
       phone: phone || '+255 754 000 000',
       role,
-      branchId: branchId || 'br-kariakoo',
+      branchId: branch.id,
       status: 'ACTIVE',
       preferredLanguage: 'en',
     };
 
     res.status(201).json(newEmployee);
   } catch (err: any) {
-    console.error('Staff creation error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Staff creation error:', err.cause?.code || err.code);
+    res.status(500).json({ error: 'Could not create the employee account. Please try again.' });
   }
 });
 
@@ -911,6 +920,54 @@ app.get('/api/branches', requireAuth, async (req, res) => {
     res.json(branchList);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/branches', requireAuth, requireRole('SUPER_ADMIN'), async (req: any, res) => {
+  const fields = ['code', 'name', 'region', 'address', 'phone'] as const;
+  const readField = (field: typeof fields[number]) => {
+    const value = req.body?.[field];
+    return typeof value === 'string' ? value.trim() : '';
+  };
+  const code = readField('code').toUpperCase();
+  const name = readField('name');
+  const region = readField('region');
+  const address = readField('address');
+  const phone = readField('phone');
+
+  if (!/^[A-Z0-9][A-Z0-9_-]{0,19}$/.test(code) || !name || !region || !address ||
+    name.length > 120 || region.length > 80 || address.length > 240 ||
+    !/^\+?[0-9 ()-]{7,30}$/.test(phone) || phone.replace(/\D/g, '').length < 7) {
+    return res.status(400).json({ error: 'Provide a valid branch code, name, region, address, and phone number.' });
+  }
+
+  try {
+    const { db } = getDb();
+    const branch = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.branches).values({
+        id: crypto.randomUUID(), code, name, region, address, phone,
+      }).onConflictDoNothing({ target: schema.branches.code }).returning();
+      if (!created) return null;
+
+      const user = req.user;
+      await tx.insert(schema.auditLogs).values({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        userName: `${user.firstName} ${user.lastName}`,
+        userRole: user.role,
+        action: 'BRANCH_CREATED',
+        entityName: 'BRANCH',
+        entityId: created.id,
+        ipAddress: req.ip,
+        details: `Created branch ${created.code} (${created.name}).`,
+      });
+      return created;
+    });
+    if (!branch) return res.status(409).json({ error: 'That branch code is already in use.' });
+    res.status(201).json(branch);
+  } catch (error) {
+    console.error('Branch creation failed:', error);
+    res.status(500).json({ error: 'Could not create the branch. Please try again.' });
   }
 });
 
